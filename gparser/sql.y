@@ -2592,6 +2592,14 @@ table_option:
 	{
 		$$ = ast.TableOption{Name: "comment", Value: asStr($3)}
 	}
+	| TABLEGROUP COMP_EQ table_option_value
+	{
+		$$ = ast.TableOption{Name: "tablegroup", Value: asStr($3)}
+	}
+	| TABLEGROUP table_option_value
+	{
+		$$ = ast.TableOption{Name: "tablegroup", Value: asStr($2)}
+	}
 
 table_option_value:
 	NAME_OB
