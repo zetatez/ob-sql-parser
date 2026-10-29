@@ -29,7 +29,7 @@ import (
 %token <node> GLOBAL SESSION LOCAL DATABASES SCHEMAS TABLES VARIABLES STATUS WARNINGS ERRORS GRANTS PROCESSLIST
 %token ENGINES STORAGE COLLATION COLUMNS FIELDS INDEXES KEYS VIEW TRIGGERS PROCEDURE FUNCTION NAMES
 %token CHARACTER EXTENDED PRETTY FORMAT CASCADE RESTRICT UNSIGNED DEFAULT COMMENT AUTO_INCREMENT CHARSET COLLATE INVISIBLE BINARY CAST
-%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE ACCOUNT RANDOM EACH STORING
+%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE ACCOUNT RANDOM EACH STORING SRID COLUMN_FORMAT FULLTEXT SPATIAL ALGORITHM FIXED DYNAMIC
 %token COMP_EQ COMP_NE COMP_LT COMP_GT COMP_LE COMP_GE NSEQ SHIFT_LEFT SHIFT_RIGHT ESCAPE ILLEGAL_TOK
 %token DIV MOD SOUNDS
 %token ALTER ADD MODIFY CHANGE RENAME COLUMN TO FORCE ROLLUP
@@ -106,7 +106,7 @@ import (
 %type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col fk_col_list fk_col
 %type <node> opt_alter_user_suffix opt_by_pwd opt_account_action
 %type <node> opt_insert_mods
-%type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list
+%type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list opt_subpartition_defs subpartition_def_list
 %type <node> show_stmt full_opt show_body show_scope_opt show_from_opt like_opt
 %type <node> set_stmt set_body set_item_list set_item set_lhs opt_scope names_arg
 %type <node> use_stmt explain_stmt opt_explain_type begin_stmt commit_stmt rollback_stmt describe_stmt opt_work opt_start_read
@@ -1473,6 +1473,26 @@ data_type:
 	{
 		$$ = dtype{name: asIdentName($1), args: asExprList($2), unsigned: asBool($3)}
 	}
+	| SET type_args_opt unsigned_opt
+	{
+		$$ = dtype{name: "SET", args: asExprList($2), unsigned: asBool($3)}
+	}
+	| TIME type_args_opt unsigned_opt
+	{
+		$$ = dtype{name: "TIME", args: asExprList($2), unsigned: asBool($3)}
+	}
+	| POINT
+	{
+		$$ = dtype{name: "POINT"}
+	}
+	| BOOLEAN
+	{
+		$$ = dtype{name: "BOOLEAN"}
+	}
+	| BINARY type_args_opt unsigned_opt
+	{
+		$$ = dtype{name: "BINARY", args: asExprList($2), unsigned: asBool($3)}
+	}
 
 type_args_opt:
 	/*empty*/
@@ -1768,7 +1788,7 @@ create_stmt:
 		if body.isLike {
 			$$ = &ast.CreateTableLikeStmt{Table: asIdent($4), Like: body.like}
 		} else {
-			$$ = &ast.CreateTableStmt{IfNotExists: asBool($3), Table: asIdent($4), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, Select: body.sel}
+			$$ = &ast.CreateTableStmt{IfNotExists: asBool($3), Table: asIdent($4), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, ColumnGroup: body.colGroup, Select: body.sel}
 		}
 	}
 	| CREATE TEMPORARY TABLE opt_if_not_exists table_name create_table_tail
@@ -1777,7 +1797,7 @@ create_stmt:
 		if body.isLike {
 			$$ = &ast.CreateTableLikeStmt{Table: asIdent($5), Like: body.like}
 		} else {
-			$$ = &ast.CreateTableStmt{Temp: true, IfNotExists: asBool($4), Table: asIdent($5), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, Select: body.sel}
+			$$ = &ast.CreateTableStmt{Temp: true, IfNotExists: asBool($4), Table: asIdent($5), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, ColumnGroup: body.colGroup, Select: body.sel}
 		}
 	}
 	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail opt_partition
@@ -2496,10 +2516,30 @@ partition_def_list:
 	}
 
 partition_def:
-	PARTITION NAME_OB opt_partition_values table_options_opt
+	PARTITION NAME_OB opt_partition_values table_options_opt opt_subpartition_defs
 	{
 		pv := asPartitionValues($3)
-		$$ = ast.PartitionDef{Name: asIdentName($2), ValueKind: pv.kind, Values: pv.values, MaxValue: pv.maxValue, Options: asTableOptions($4)}
+		$$ = ast.PartitionDef{Name: asIdentName($2), ValueKind: pv.kind, Values: pv.values, MaxValue: pv.maxValue, Options: asTableOptions($4), Subs: asPartitionDefs($5)}
+	}
+
+opt_subpartition_defs:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| '(' subpartition_def_list ')'
+	{
+		$$ = $2
+	}
+
+subpartition_def_list:
+	SUBPARTITION NAME_OB table_options_opt
+	{
+		$$ = []ast.PartitionDef{{Name: asIdentName($2), Options: asTableOptions($3)}}
+	}
+	| subpartition_def_list ',' SUBPARTITION NAME_OB table_options_opt
+	{
+		$$ = append(asPartitionDefs($1), ast.PartitionDef{Name: asIdentName($4), Options: asTableOptions($5)})
 	}
 
 opt_partition_values:
@@ -2652,6 +2692,34 @@ column_attr:
 	| CHECK '(' expr ')'
 	{
 		$$ = &colAttrs{check: asExpr($3)}
+	}
+	| SRID INTNUM
+	{
+		$$ = &colAttrs{srid: asLitValue($2)}
+	}
+	| COLUMN_FORMAT NAME_OB
+	{
+		$$ = &colAttrs{columnFormat: asIdentName($2)}
+	}
+	| COLUMN_FORMAT DEFAULT
+	{
+		$$ = &colAttrs{columnFormat: "DEFAULT"}
+	}
+	| COLUMN_FORMAT FIXED
+	{
+		$$ = &colAttrs{columnFormat: "FIXED"}
+	}
+	| COLUMN_FORMAT DYNAMIC
+	{
+		$$ = &colAttrs{columnFormat: "DYNAMIC"}
+	}
+	| STORAGE NAME_OB
+	{
+		$$ = &colAttrs{storage: asIdentName($2)}
+	}
+	| BINARY
+	{
+		$$ = &colAttrs{binaryAttr: true}
 	}
 	| GENERATED ALWAYS AS '(' expr ')' opt_stored
 	{
@@ -2911,6 +2979,18 @@ table_option:
 	{
 		$$ = ast.TableOption{Name: "block_size", Value: asStr($3)}
 	}
+	| COMMENT STRING_VALUE
+	{
+		$$ = ast.TableOption{Name: "comment", Value: litText($2)}
+	}
+	| TABLESPACE NAME_OB
+	{
+		$$ = ast.TableOption{Name: "tablespace", Value: asIdentName($2)}
+	}
+	| TABLESPACE COMP_EQ NAME_OB
+	{
+		$$ = ast.TableOption{Name: "tablespace", Value: asIdentName($3)}
+	}
 	| TRANSFER COMP_EQ table_option_value
 	{
 		$$ = ast.TableOption{Name: "transfer", Value: asStr($3)}
@@ -2940,6 +3020,14 @@ table_option_value:
 	| BOOL_VALUE
 	{
 		$$ = asLitValue($1)
+	}
+	| FIXED
+	{
+		$$ = "FIXED"
+	}
+	| DYNAMIC
+	{
+		$$ = "DYNAMIC"
 	}
 
 opt_if_not_exists:
@@ -4366,6 +4454,14 @@ alter_action:
 		a.RefCol = cp.ref
 		$$ = a
 	}
+	| ADD opt_column IF NOT EXISTS column_def opt_col_position
+	{
+		a := ast.AlterAction{Kind: ast.AlterAddColumn, Column: asColumnDef($6), IfNotExists: true}
+		cp := $7.(colPos)
+		a.Position = cp.position
+		a.RefCol = cp.ref
+		$$ = a
+	}
 	| ADD opt_column '(' column_def_list ')'
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddColumns, ColumnDefs: asColumnDefs($4)}
@@ -4398,6 +4494,22 @@ alter_action:
 		a.ColumnGroup = t.colgroup
 		$$ = a
 	}
+	| ADD FULLTEXT INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	{
+		a := ast.AlterAction{Kind: ast.AlterAddFulltextIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
+		t := $10.(withTail)
+		a.WithOpts = t.opts
+		a.ColumnGroup = t.colgroup
+		$$ = a
+	}
+	| ADD SPATIAL INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	{
+		a := ast.AlterAction{Kind: ast.AlterAddSpatialIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
+		t := $10.(withTail)
+		a.WithOpts = t.opts
+		a.ColumnGroup = t.colgroup
+		$$ = a
+	}
 	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
 	{
 		a := ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
@@ -4416,9 +4528,9 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddConstraint, Constraint: $2.(*ast.ConstraintDef)}
 	}
-	| DROP opt_column NAME_OB
+	| DROP opt_column opt_if_exists NAME_OB
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterDropColumn, Name: asIdentName($3)}
+		$$ = ast.AlterAction{Kind: ast.AlterDropColumn, Name: asIdentName($4), IfExists: asBool($3)}
 	}
 	| DROP INDEX NAME_OB
 	{
@@ -4491,6 +4603,14 @@ alter_action:
 		a.Collate = asStr($6)
 		$$ = a
 	}
+	| DEFAULT CHARACTER SET COMP_EQ NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterConvertCharset, Charset: asIdentName($5)}
+	}
+	| DEFAULT CHARSET COMP_EQ NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterConvertCharset, Charset: asIdentName($4)}
+	}
 	| AUTO_INCREMENT COMP_EQ expr
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAutoIncrement, Count: asExpr($3)}
@@ -4511,6 +4631,10 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterRenameIndex, Name: asIdentName($3), NewName: asIdentName($5)}
 	}
+	| RENAME KEY NAME_OB TO NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterRenameIndex, Name: asIdentName($3), NewName: asIdentName($5)}
+	}
 	| ALTER opt_column NAME_OB SET DEFAULT expr
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterSetDefault, Name: asIdentName($3), Default: asExpr($6)}
@@ -4518,6 +4642,14 @@ alter_action:
 	| ALTER opt_column NAME_OB DROP DEFAULT
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterDropDefault, Name: asIdentName($3)}
+	}
+	| ALTER opt_column NAME_OB SET VISIBLE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterSetColumnVisible, Name: asIdentName($3)}
+	}
+	| ALTER opt_column NAME_OB SET INVISIBLE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterSetColumnInvisible, Name: asIdentName($3)}
 	}
 	| ALTER INDEX NAME_OB INVISIBLE
 	{
@@ -4530,6 +4662,30 @@ alter_action:
 	| ENABLE KEYS
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterEnableKeys}
+	}
+	| FORCE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterForce}
+	}
+	| PARTITION BY partition_by
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterRepartition, Partition: asPartitionSpec($3)}
+	}
+	| ALGORITHM COMP_EQ NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterAlgorithm, Name: asIdentName($3)}
+	}
+	| ALGORITHM COMP_EQ DEFAULT
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterAlgorithm, Name: "DEFAULT"}
+	}
+	| LOCK COMP_EQ NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterLock, Name: asIdentName($3)}
+	}
+	| TABLESPACE NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterAssignTablespace, Name: asIdentName($2)}
 	}
 	| DISABLE KEYS
 	{

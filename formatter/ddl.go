@@ -41,7 +41,10 @@ func (f *formatter) createTable(v *ast.CreateTableStmt) {
 		}
 	}
 	for _, o := range v.Options {
-		f.printf(" %s=%s", stringsUpper(o.Name), o.Value)
+		f.tableOption(o)
+	}
+	if v.ColumnGroup != "" {
+		f.raw(" " + v.ColumnGroup)
 	}
 	if v.Partition != nil {
 		f.raw(" ")
@@ -120,7 +123,20 @@ func (f *formatter) partitionDef(pd *ast.PartitionDef) {
 		}
 	}
 	for _, o := range pd.Options {
-		f.printf(" %s=%s", stringsUpper(o.Name), o.Value)
+		f.tableOption(o)
+	}
+	if len(pd.Subs) > 0 {
+		f.raw(" (")
+		for i := range pd.Subs {
+			if i > 0 {
+				f.raw(", ")
+			}
+			f.raw("SUBPARTITION " + f.quoteIfNeeded(pd.Subs[i].Name))
+			for _, o := range pd.Subs[i].Options {
+				f.tableOption(o)
+			}
+		}
+		f.raw(")")
 	}
 }
 func (f *formatter) columnDef(c *ast.ColumnDef) string {
@@ -187,6 +203,18 @@ func (f *formatter) columnDef(c *ast.ColumnDef) string {
 		sb.WriteString(" CHECK (")
 		sb.WriteString(f.exprString(c.Check))
 		sb.WriteString(")")
+	}
+	if c.Srid != "" {
+		sb.WriteString(" SRID " + c.Srid)
+	}
+	if c.ColumnFormat != "" {
+		sb.WriteString(" COLUMN_FORMAT " + c.ColumnFormat)
+	}
+	if c.Storage != "" {
+		sb.WriteString(" STORAGE " + c.Storage)
+	}
+	if c.BinaryAttr {
+		sb.WriteString(" BINARY")
 	}
 	if c.PrimaryKey {
 		sb.WriteString(" PRIMARY KEY")
@@ -328,7 +356,11 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		}
 		f.colPosition(a)
 	case ast.AlterDropColumn:
-		f.printf("DROP COLUMN %s", f.quoteIfNeeded(a.Name))
+		f.raw("DROP COLUMN ")
+		if a.IfExists {
+			f.raw("IF EXISTS ")
+		}
+		f.raw(f.quoteIfNeeded(a.Name))
 	case ast.AlterModifyColumn:
 		f.raw("MODIFY COLUMN ")
 		if a.Column != nil {
@@ -348,6 +380,32 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 			f.printf("RENAME TO %s", f.ident(a.Target))
 		} else {
 			f.printf("RENAME TO %s", f.quoteIfNeeded(a.NewName))
+		}
+	case ast.AlterAddFulltextIndex:
+		f.raw("ADD FULLTEXT INDEX ")
+		if a.Name != "" {
+			f.printf("%s ", f.quoteIfNeeded(a.Name))
+		}
+		if len(a.IndexCols) > 0 {
+			f.indexColsParen(a.IndexCols)
+		} else {
+			f.colsParen(a.Columns)
+		}
+		for _, o := range a.IndexOptions {
+			f.printf(" %s", o)
+		}
+	case ast.AlterAddSpatialIndex:
+		f.raw("ADD SPATIAL INDEX ")
+		if a.Name != "" {
+			f.printf("%s ", f.quoteIfNeeded(a.Name))
+		}
+		if len(a.IndexCols) > 0 {
+			f.indexColsParen(a.IndexCols)
+		} else {
+			f.colsParen(a.Columns)
+		}
+		for _, o := range a.IndexOptions {
+			f.printf(" %s", o)
 		}
 	case ast.AlterAddIndex:
 		f.raw("ADD ")
@@ -460,6 +518,30 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		f.printf("DROP CONSTRAINT %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterDropForeignKey:
 		f.printf("DROP FOREIGN KEY %s", f.quoteIfNeeded(a.Name))
+	case ast.AlterSetColumnVisible:
+		f.printf("ALTER COLUMN %s SET VISIBLE", f.quoteIfNeeded(a.Name))
+	case ast.AlterSetColumnInvisible:
+		f.printf("ALTER COLUMN %s SET INVISIBLE", f.quoteIfNeeded(a.Name))
+	case ast.AlterForce:
+		f.raw("FORCE")
+	case ast.AlterRepartition:
+		f.raw("PARTITION BY ")
+		if a.Partition != nil {
+			f.raw(string(a.Partition.Kind))
+			f.raw(" (")
+			f.expr(a.Partition.Expr)
+			f.raw(")")
+			if a.Partition.Count != nil {
+				f.raw(" PARTITIONS ")
+				f.expr(a.Partition.Count)
+			}
+		}
+	case ast.AlterAlgorithm:
+		f.printf("ALGORITHM = %s", a.Name)
+	case ast.AlterLock:
+		f.printf("LOCK = %s", a.Name)
+	case ast.AlterAssignTablespace:
+		f.printf("TABLESPACE %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterEnableKeys:
 		f.raw("ENABLE KEYS")
 	case ast.AlterDisableKeys:
@@ -533,6 +615,15 @@ func (f *formatter) indexColsParen(cols []ast.IndexCol) {
 		}
 	}
 	f.raw(")")
+}
+
+// tableOption 渲染 CREATE TABLE 选项；TABLESPACE 不带等号。
+func (f *formatter) tableOption(o ast.TableOption) {
+	if o.Name == "tablespace" {
+		f.printf(" TABLESPACE %s", o.Value)
+		return
+	}
+	f.printf(" %s=%s", stringsUpper(o.Name), o.Value)
 }
 
 // idents 以逗号分隔打印标识符列表（RETURNING 等）。

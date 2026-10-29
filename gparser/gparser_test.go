@@ -972,6 +972,46 @@ func TestIndexStoringWithAndCheck(t *testing.T) {
 	}
 }
 
+func TestCreateAlterDeepCheck(t *testing.T) {
+	// 列类型全集（含 token 化的 SET/TIME/POINT/BOOLEAN/BINARY）
+	st := parseAll(t, "CREATE TABLE t (a JSON, b SET('x','y'), c TIME(3), d POINT, e BOOLEAN, f BINARY(16))")
+	if len(st[0].(*ast.CreateTableStmt).Columns) != 6 {
+		t.Fatal("column types")
+	}
+	// 列属性 SRID / COLUMN_FORMAT / STORAGE / BINARY
+	st = parseAll(t, "CREATE TABLE t (a INT SRID 4326, b VARCHAR(10) COLUMN_FORMAT DEFAULT, c INT STORAGE MEMORY, d VARCHAR(20) BINARY)")
+	cols := st[0].(*ast.CreateTableStmt).Columns
+	if cols[0].Srid != "4326" || cols[1].ColumnFormat != "DEFAULT" || cols[2].Storage != "MEMORY" || !cols[3].BinaryAttr {
+		t.Fatalf("column attrs: %+v", cols)
+	}
+	// 分区内 SUBPARTITION 列表 + 分区选项 TABLESPACE/COMMENT
+	st = parseAll(t, "CREATE TABLE t (a INT) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (100) TABLESPACE ts1 COMMENT 'p' (SUBPARTITION sp0, SUBPARTITION sp1))")
+	pd := st[0].(*ast.CreateTableStmt).Partition.Partitions[0]
+	if len(pd.Subs) != 2 || pd.Options[0].Name != "tablespace" {
+		t.Fatalf("partition subs/options: %+v", pd)
+	}
+	// ALTER: IF NOT EXISTS / IF EXISTS / VISIBLE / FULLTEXT / SPATIAL / FORCE / repartition / ALGORITHM/LOCK/TABLESPACE
+	st = parseAll(t, "ALTER TABLE t ADD COLUMN IF NOT EXISTS c INT, DROP COLUMN IF EXISTS d, ALTER COLUMN e SET VISIBLE, ADD FULLTEXT INDEX f (a), ADD SPATIAL INDEX g (a), FORCE, PARTITION BY HASH (a) PARTITIONS 4, ALGORITHM = INPLACE, LOCK = SHARED")
+	acts := st[0].(*ast.AlterTableStmt).Actions
+	want := []ast.AlterActionKind{ast.AlterAddColumn, ast.AlterDropColumn, ast.AlterSetColumnVisible, ast.AlterAddFulltextIndex, ast.AlterAddSpatialIndex, ast.AlterForce, ast.AlterRepartition, ast.AlterAlgorithm, ast.AlterLock}
+	if len(acts) != len(want) {
+		t.Fatalf("actions = %d, want %d", len(acts), len(want))
+	}
+	for i, w := range want {
+		if acts[i].Kind != w {
+			t.Fatalf("action %d = %q, want %q", i, acts[i].Kind, w)
+		}
+	}
+	if !acts[0].IfNotExists || !acts[1].IfExists {
+		t.Fatal("if not exists / if exists lost")
+	}
+	// ALTER TABLESPACE 分配
+	st = parseAll(t, "ALTER TABLE t TABLESPACE ts1")
+	if st[0].(*ast.AlterTableStmt).Actions[0].Kind != ast.AlterAssignTablespace {
+		t.Fatal("alter tablespace")
+	}
+}
+
 func TestDDLDMLExtras3(t *testing.T) {
 	// CREATE INDEX 完整形态
 	st := parseAll(t, "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)")

@@ -19,13 +19,17 @@ type ColumnDef struct {
 	GeneratedStored bool       // true = STORED, false = VIRTUAL
 
 	// 列级约束
-	PrimaryKey bool
-	UniqueKey  bool
-	RefTable   *Identifier // 列级 REFERENCES
-	RefColumns []*Identifier
-	OnDelete   string
-	FkOnUpdate string
-	Check      Expression // 列级 CHECK (expr)
+	PrimaryKey   bool
+	UniqueKey    bool
+	RefTable     *Identifier // 列级 REFERENCES
+	RefColumns   []*Identifier
+	OnDelete     string
+	FkOnUpdate   string
+	Check        Expression // 列级 CHECK (expr)
+	Srid         string     // SRID n
+	ColumnFormat string     // COLUMN_FORMAT DEFAULT|FIXED|DYNAMIC
+	Storage      string     // STORAGE DISK|MEMORY
+	BinaryAttr   bool       // 列 BINARY 属性
 }
 
 // Nullable is a tri-state column nullability.
@@ -81,6 +85,7 @@ type CreateTableStmt struct {
 	Constraints []*ConstraintDef
 	Options     []TableOption
 	Partition   *PartitionSpec
+	ColumnGroup string      // 表级 WITH COLUMN GROUP (...)
 	Select      *SelectStmt // CREATE TABLE ... AS SELECT
 }
 
@@ -120,6 +125,7 @@ type PartitionDef struct {
 	Values    []Expression
 	MaxValue  bool // VALUES LESS THAN MAXVALUE (无括号)
 	Options   []TableOption
+	Subs      []PartitionDef // 分区内 SUBPARTITION sp0, sp1
 }
 
 // CreateDatabaseStmt is CREATE DATABASE/SCHEMA.
@@ -396,16 +402,25 @@ const (
 	AlterReorganizePartition AlterActionKind = "REORGANIZE PARTITION"
 	AlterRemovePartitioning  AlterActionKind = "REMOVE PARTITIONING"
 
-	AlterAddColumns     AlterActionKind = "ADD COLUMNS"
-	AlterConvertCharset AlterActionKind = "CONVERT TO CHARACTER SET"
-	AlterAutoIncrement  AlterActionKind = "AUTO_INCREMENT"
-	AlterVisibleIndex   AlterActionKind = "ALTER INDEX VISIBLE"
-	AlterInvisibleIndex AlterActionKind = "ALTER INDEX INVISIBLE"
-	AlterEnableKeys     AlterActionKind = "ENABLE KEYS"
-	AlterDisableKeys    AlterActionKind = "DISABLE KEYS"
-	AlterDropCheck      AlterActionKind = "DROP CHECK"
-	AlterDropConstraint AlterActionKind = "DROP CONSTRAINT"
-	AlterDropForeignKey AlterActionKind = "DROP FOREIGN KEY"
+	AlterAddColumns         AlterActionKind = "ADD COLUMNS"
+	AlterConvertCharset     AlterActionKind = "CONVERT TO CHARACTER SET"
+	AlterAutoIncrement      AlterActionKind = "AUTO_INCREMENT"
+	AlterVisibleIndex       AlterActionKind = "ALTER INDEX VISIBLE"
+	AlterInvisibleIndex     AlterActionKind = "ALTER INDEX INVISIBLE"
+	AlterEnableKeys         AlterActionKind = "ENABLE KEYS"
+	AlterDisableKeys        AlterActionKind = "DISABLE KEYS"
+	AlterDropCheck          AlterActionKind = "DROP CHECK"
+	AlterDropConstraint     AlterActionKind = "DROP CONSTRAINT"
+	AlterDropForeignKey     AlterActionKind = "DROP FOREIGN KEY"
+	AlterSetColumnVisible   AlterActionKind = "ALTER COLUMN SET VISIBLE"
+	AlterSetColumnInvisible AlterActionKind = "ALTER COLUMN SET INVISIBLE"
+	AlterAddFulltextIndex   AlterActionKind = "ADD FULLTEXT INDEX"
+	AlterAddSpatialIndex    AlterActionKind = "ADD SPATIAL INDEX"
+	AlterForce              AlterActionKind = "FORCE"
+	AlterRepartition        AlterActionKind = "PARTITION BY"
+	AlterAlgorithm          AlterActionKind = "ALGORITHM"
+	AlterLock               AlterActionKind = "LOCK"
+	AlterAssignTablespace   AlterActionKind = "TABLESPACE"
 )
 
 // AlterAction is one comma-separated action in an ALTER TABLE statement.
@@ -424,6 +439,9 @@ type AlterAction struct {
 	// column position / convert charset
 	Position     string // "","FIRST","AFTER"
 	RefCol       string
+	IfNotExists  bool           // ADD COLUMN IF NOT EXISTS
+	IfExists     bool           // DROP COLUMN IF EXISTS
+	Partition    *PartitionSpec // ALTER ... PARTITION BY
 	ColumnDefs   []*ColumnDef
 	Charset      string
 	Collate      string

@@ -37,6 +37,10 @@ type colAttrs struct {
 	ref           fkRef
 	hasRef        bool
 	check         ast.Expression
+	srid          string
+	columnFormat  string
+	storage       string
+	binaryAttr    bool
 }
 
 // asIndexCol 组装一个索引列（可带前缀长度与排序方向）。
@@ -95,12 +99,13 @@ type createDefs struct {
 // tableBody is the parsed tail of a CREATE TABLE (either a column list with
 // options, or a LIKE source).
 type tableBody struct {
-	defs   createDefs
-	opts   []ast.TableOption
-	part   *ast.PartitionSpec
-	sel    *ast.SelectStmt
-	isLike bool
-	like   *ast.Identifier
+	defs     createDefs
+	opts     []ast.TableOption
+	part     *ast.PartitionSpec
+	sel      *ast.SelectStmt
+	isLike   bool
+	like     *ast.Identifier
+	colGroup string
 }
 
 func asNodes(v interface{}) []ast.Node {
@@ -613,6 +618,10 @@ func buildColumnDef(name interface{}, dt interface{}, attrs interface{}) *ast.Co
 			cd.FkOnUpdate = a.ref.onUpdate
 		}
 		cd.Check = a.check
+		cd.Srid = a.srid
+		cd.ColumnFormat = a.columnFormat
+		cd.Storage = a.storage
+		cd.BinaryAttr = a.binaryAttr
 	}
 	return cd
 }
@@ -872,6 +881,18 @@ func mergeAttrs(a, b *colAttrs) *colAttrs {
 	}
 	if b.check != nil {
 		a.check = b.check
+	}
+	if b.srid != "" {
+		a.srid = b.srid
+	}
+	if b.columnFormat != "" {
+		a.columnFormat = b.columnFormat
+	}
+	if b.storage != "" {
+		a.storage = b.storage
+	}
+	if b.binaryAttr {
+		a.binaryAttr = true
 	}
 	if b.invisible {
 		a.invisible = true
