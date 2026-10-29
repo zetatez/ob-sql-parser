@@ -128,6 +128,7 @@ func (n *AlterTablespaceStmt) Children() []Node     { return optionExprs(n.Optio
 func (n *RotateMasterKeyStmt) Children() []Node     { return nil }
 func (n *RenameUserStmt) Children() []Node          { return nil }
 func (n *LockUserStmt) Children() []Node            { return nil }
+func (n *AlterUserStmt) Children() []Node           { return nil }
 
 func (n *AlterSequenceStmt) Children() []Node {
 	return childrenOf(n.StartWith, n.IncrementBy, n.MinValue, n.MaxValue, n.Cache)

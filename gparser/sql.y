@@ -29,13 +29,13 @@ import (
 %token <node> GLOBAL SESSION LOCAL DATABASES SCHEMAS TABLES VARIABLES STATUS WARNINGS ERRORS GRANTS PROCESSLIST
 %token ENGINES STORAGE COLLATION COLUMNS FIELDS INDEXES KEYS VIEW TRIGGERS PROCEDURE FUNCTION NAMES
 %token CHARACTER EXTENDED PRETTY FORMAT CASCADE RESTRICT UNSIGNED DEFAULT COMMENT AUTO_INCREMENT CHARSET COLLATE INVISIBLE BINARY CAST
-%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE
+%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE ACCOUNT RANDOM
 %token COMP_EQ COMP_NE COMP_LT COMP_GT COMP_LE COMP_GE NSEQ SHIFT_LEFT SHIFT_RIGHT ESCAPE ILLEGAL_TOK
 %token DIV MOD SOUNDS
 %token ALTER ADD MODIFY CHANGE RENAME COLUMN TO FORCE ROLLUP
 %token LIST HASH MAXVALUE LESS THAN PARTITIONS
 %token GENERATED ALWAYS VIRTUAL STORED
-%token SEQUENCE INCREMENT CACHE MINVALUE CYCLE NOCYCLE NOORDER
+%token SEQUENCE INCREMENT CACHE MINVALUE CYCLE NOCYCLE NOORDER NOCACHE NOMINVALUE NOMAXVALUE
 %token ISOLATION LEVEL UNCOMMITTED COMMITTED REPEATABLE SERIALIZABLE SAVEPOINT RELEASE LOCK UNLOCK
 %token PLUGINS PROFILES PROFILE PRIVILEGES TRIGGER OPEN EVENTS MUTEX
 %token GRANT REVOKE OPTION AT
@@ -99,13 +99,17 @@ import (
 %type <node> opt_partition partition_by opt_partitions_count opt_partition_defs partition_def_list partition_def
 %type <node> opt_subpartition opt_subpartitions_count
 %type <node> opt_auto_partition
-%type <node> ref_action opt_returning delete_table_list
+%type <node> ref_action opt_returning delete_table_list returning_list returning_col
 %type <node> opt_low_priority opt_index_option_list alter_index_option
 %type <node> opt_fk_reference opt_pk_name_list opt_fk_ref_actions opt_fk_ref_action_update opt_fk_ref_action_delete
+%type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col
+%type <node> opt_alter_user_suffix opt_by_pwd opt_account_action
+%type <node> opt_insert_mods
 %type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list
 %type <node> show_stmt full_opt show_body show_scope_opt show_from_opt like_opt
 %type <node> set_stmt set_body set_item_list set_item set_lhs opt_scope names_arg
 %type <node> use_stmt explain_stmt opt_explain_type begin_stmt commit_stmt rollback_stmt describe_stmt opt_work opt_start_read
+%type <node> opt_chain
 %type <node> transaction_characteristics transaction_characteristic isolation_level savepoint_kw
 %type <node> savepoint_stmt release_savepoint_stmt lock_tables_stmt unlock_tables_stmt
 %type <node> lock_table_list lock_table opt_lock_alias lock_type
@@ -519,9 +523,9 @@ table_ref:
 	{
 		$$ = mkJoin(asTableRef($1), asTableRef($5), "FULL JOIN", $6)
 	}
-	| table_ref STRAIGHT_JOIN table_primary
+	| table_ref STRAIGHT_JOIN table_primary join_cond_opt
 	{
-		$$ = mkJoin(asTableRef($1), asTableRef($3), "STRAIGHT_JOIN", nil)
+		$$ = mkJoin(asTableRef($1), asTableRef($3), "STRAIGHT_JOIN", $4)
 	}
 	| table_ref NATURAL JOIN table_primary
 	{
@@ -832,7 +836,7 @@ for_opt:
 	}
 	| FOR SHARE
 	{
-		$$ = lockOpt{update: true, wait: "SHARE"}
+		$$ = lockOpt{share: true, wait: "SHARE"}
 	}
 	| LOCK IN SHARE MODE
 	{
@@ -1196,6 +1200,10 @@ simple_expr:
 	{
 		$$ = &ast.ExistsExpr{Query: asSelect($3)}
 	}
+	| ROW '(' expr_list ')'
+	{
+		$$ = &ast.FuncCall{Name: "ROW", Args: asExprList($3)}
+	}
 	| MATCH '(' ident_list ')' AGAINST '(' bit_expr opt_match_modifier ')'
 	{
 		$$ = &ast.MatchAgainstExpr{Columns: asIdentList($3), Against: asExpr($7), Modifier: asStr($8)}
@@ -1292,6 +1300,10 @@ over_opt:
 	| OVER window_spec
 	{
 		$$ = $2
+	}
+	| OVER NAME_OB
+	{
+		$$ = &ast.WindowSpec{Name: asIdentName($2)}
 	}
 
 window_spec:
@@ -1484,15 +1496,15 @@ unsigned_opt:
 /* ---------------- INSERT ---------------- */
 
 insert_stmt:
-	INSERT ignore_opt opt_into table_name col_list_opt insert_source on_dup_opt returning_opt
+	INSERT opt_insert_mods ignore_opt opt_into table_name col_list_opt insert_source on_dup_opt returning_opt
 	{
-		ins := &ast.InsertStmt{Ignore: asBool($2), Table: asIdent($4), Columns: asIdentList($5)}
-		src := $6.(insertSource)
+		ins := &ast.InsertStmt{Mods: asStr($2), Ignore: asBool($3), Table: asIdent($5), Columns: asIdentList($6)}
+		src := $7.(insertSource)
 		ins.Rows = src.rows
 		ins.Set = src.set
 		ins.Source = src.sel
-		ins.OnDuplicate = asAssignList($7)
-		ins.Returning = asIdentList($8)
+		ins.OnDuplicate = asAssignList($8)
+		ins.Returning = asIdentList($9)
 		$$ = ins
 	}
 	| REPLACE ignore_opt opt_into table_name col_list_opt insert_source
@@ -1503,6 +1515,24 @@ insert_stmt:
 		ins.Set = src.set
 		ins.Source = src.sel
 		$$ = ins
+	}
+
+opt_insert_mods:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| LOW_PRIORITY
+	{
+		$$ = "LOW_PRIORITY"
+	}
+	| HIGH_PRIORITY
+	{
+		$$ = "HIGH_PRIORITY"
+	}
+	| DELAYED
+	{
+		$$ = "DELAYED"
 	}
 
 opt_into:
@@ -1665,9 +1695,29 @@ opt_returning:
 	{
 		$$ = nil
 	}
-	| RETURNING ident_list
+	| RETURNING returning_list
 	{
 		$$ = asIdentList($2)
+	}
+
+returning_list:
+	returning_col
+	{
+		$$ = []*ast.Identifier{asIdent($1)}
+	}
+	| returning_list ',' returning_col
+	{
+		$$ = append(asIdentList($1), asIdent($3))
+	}
+
+returning_col:
+	NAME_OB
+	{
+		$$ = $1
+	}
+	| NAME_OB '.' NAME_OB
+	{
+		$$ = &ast.Identifier{Parts: []string{asIdentName($1), asIdentName($3)}}
 	}
 
 delete_table_list:
@@ -1729,9 +1779,9 @@ create_stmt:
 			$$ = &ast.CreateTableStmt{Temp: true, IfNotExists: asBool($4), Table: asIdent($5), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, Select: body.sel}
 		}
 	}
-	| CREATE opt_unique INDEX table_name ON table_name '(' index_col_list ')'
+	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_index_option_list opt_partition
 	{
-		$$ = &ast.CreateIndexStmt{Unique: asBool($2), Name: asIdent($4), Table: asIdent($6), Columns: asIdentList($8)}
+		$$ = &ast.CreateIndexStmt{Unique: asBool($2), IfNotExists: asBool($4), Name: asIdent($5), Method: asStr($6), Table: asIdent($8), Columns: asIndexCols($10), Options: asStringList($12), Partition: asPartitionSpec($13)}
 	}
 	| CREATE DATABASE opt_if_not_exists NAME_OB db_opts_opt
 	{
@@ -1753,6 +1803,16 @@ create_stmt:
 	| CREATE USER opt_if_not_exists create_user_list
 	{
 		$$ = &ast.CreateUserStmt{IfNotExists: asBool($3), Users: asUserSpecs($4)}
+	}
+	| ALTER USER user_spec_list opt_alter_user_suffix
+	{
+		au := &ast.AlterUserStmt{Users: asUserSpecs($3)}
+		if $4 != nil {
+			s := $4.(alterUserSuffix)
+			au.Password = s.pwd
+			au.Account = s.account
+		}
+		$$ = au
 	}
 	| CREATE ROLE opt_if_not_exists role_name_list
 	{
@@ -1866,6 +1926,16 @@ opt_dblink_tail:
 	| HOST STRING_VALUE PORT expr CLUSTER NAME_OB
 	{
 		$$ = dblinkTail{host: asLitValue($2), port: asExpr($4), cluster: asIdentName($6)}
+	}
+
+opt_index_using:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| USING NAME_OB
+	{
+		$$ = asIdentName($2)
 	}
 
 opt_load_properties:
@@ -2015,6 +2085,10 @@ cluster_opt_name:
 	{
 		$$ = asIdentName($1)
 	}
+	| BLOCK_SIZE
+	{
+		$$ = "block_size"
+	}
 	| UNIT
 	{
 		$$ = "unit"
@@ -2148,6 +2222,42 @@ opt_identified:
 		$$ = identAuth{plugin: asIdentName($3), pwd: asLitValue($5)}
 	}
 
+opt_alter_user_suffix:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| IDENTIFIED BY STRING_VALUE
+	{
+		$$ = alterUserSuffix{pwd: asLitValue($3)}
+	}
+	| IDENTIFIED BY RANDOM NAME_OB
+	{
+		$$ = alterUserSuffix{pwd: "RANDOM PASSWORD"}
+	}
+	| IDENTIFIED WITH NAME_OB opt_by_pwd
+	{
+		$$ = alterUserSuffix{plugin: asIdentName($3), pwd: asStr($4)}
+	}
+	| ACCOUNT LOCK
+	{
+		$$ = alterUserSuffix{account: "LOCK"}
+	}
+	| ACCOUNT UNLOCK
+	{
+		$$ = alterUserSuffix{account: "UNLOCK"}
+	}
+
+opt_by_pwd:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| BY STRING_VALUE
+	{
+		$$ = asLitValue($2)
+	}
+
 sequence_options:
 	/*empty*/
 	{
@@ -2178,6 +2288,18 @@ sequence_option:
 	| CACHE expr
 	{
 		$$ = seqOpts{cache: asExpr($2)}
+	}
+	| NOCACHE
+	{
+		$$ = seqOpts{cache: &ast.Literal{LitType: ast.LitNull, Value: "nocache", Text: "NOCACHE"}}
+	}
+	| NOMINVALUE
+	{
+		$$ = seqOpts{min: &ast.Literal{LitType: ast.LitNull, Value: "nominvalue", Text: "NOMINVALUE"}}
+	}
+	| NOMAXVALUE
+	{
+		$$ = seqOpts{max: &ast.Literal{LitType: ast.LitNull, Value: "nomaxvalue", Text: "NOMAXVALUE"}}
 	}
 	| CYCLE
 	{
@@ -2519,15 +2641,20 @@ column_attr:
 	}
 	| PRIMARY KEY
 	{
-		$$ = &colAttrs{}
+		$$ = &colAttrs{primaryKey: true}
 	}
 	| UNIQUE
 	{
-		$$ = &colAttrs{}
-	}
+		$$ = &colAttrs{uniqueKey: true}
+	}	
 	| UNIQUE KEY
 	{
-		$$ = &colAttrs{}
+		$$ = &colAttrs{uniqueKey: true}
+	}
+	| REFERENCES table_name opt_pk_name_list opt_fk_ref_actions
+	{
+		ra := $4.(*refActions)
+		$$ = &colAttrs{ref: fkRef{table: asIdent($2), cols: asIdentList($3), onDelete: ra.onDelete, onUpdate: ra.onUpdate}, hasRef: true}
 	}
 	| GENERATED ALWAYS AS '(' expr ')' opt_stored
 	{
@@ -2562,25 +2689,37 @@ table_constraint:
 	| constraint_body
 
 constraint_body:
-	PRIMARY KEY '(' ident_list ')'
+	PRIMARY KEY '(' pk_col_list ')'
 	{
 		$$ = &ast.ConstraintDef{Kind: "PRIMARY KEY", Columns: asIdentList($4)}
 	}
-	| UNIQUE '(' ident_list ')'
+	| UNIQUE '(' pk_col_list ')'
 	{
 		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Columns: asIdentList($3)}
 	}
-	| UNIQUE KEY '(' ident_list ')'
+	| KEY '(' cst_col_list ')'
 	{
-		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Columns: asIdentList($4)}
+		$$ = &ast.ConstraintDef{Kind: "KEY", IndexCols: asIndexCols($3)}
 	}
-	| KEY '(' ident_list ')'
+	| KEY NAME_OB '(' cst_col_list ')'
 	{
-		$$ = &ast.ConstraintDef{Kind: "KEY", Columns: asIdentList($3)}
+		$$ = &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), IndexCols: asIndexCols($4)}
 	}
-	| INDEX '(' ident_list ')'
+	| INDEX '(' cst_col_list ')'
 	{
-		$$ = &ast.ConstraintDef{Kind: "INDEX", Columns: asIdentList($3)}
+		$$ = &ast.ConstraintDef{Kind: "INDEX", IndexCols: asIndexCols($3)}
+	}
+	| INDEX NAME_OB '(' cst_col_list ')'
+	{
+		$$ = &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), IndexCols: asIndexCols($4)}
+	}
+	| UNIQUE KEY '(' cst_col_list ')'
+	{
+		$$ = &ast.ConstraintDef{Kind: "UNIQUE", IndexCols: asIndexCols($4)}
+	}
+	| UNIQUE KEY NAME_OB '(' cst_col_list ')'
+	{
+		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), IndexCols: asIndexCols($5)}
 	}
 	| FOREIGN KEY '(' ident_list ')' opt_fk_reference
 	{
@@ -2739,6 +2878,10 @@ table_option:
 	{
 		$$ = ast.TableOption{Name: "block_size", Value: asStr($3)}
 	}
+	| TRANSFER COMP_EQ table_option_value
+	{
+		$$ = ast.TableOption{Name: "transfer", Value: asStr($3)}
+	}
 
 table_option_value:
 	NAME_OB
@@ -2799,17 +2942,59 @@ opt_purge:
 index_col_list:
 	index_col
 	{
-		$$ = []*ast.Identifier{asIdent($1)}
+		$$ = []ast.IndexCol{$1.(ast.IndexCol)}
 	}
 	| index_col_list ',' index_col
+	{
+		$$ = append(asIndexCols($1), $3.(ast.IndexCol))
+	}
+
+index_col:
+	NAME_OB opt_col_length opt_asc_desc
+	{
+		$$ = asIndexCol($1, $3, $2)
+	}
+
+opt_col_length:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| '(' expr ')'
+	{
+		$$ = asExpr($2)
+	}
+
+pk_col_list:
+	pk_col
+	{
+		$$ = []*ast.Identifier{asIdent($1)}
+	}
+	| pk_col_list ',' pk_col
 	{
 		$$ = append(asIdentList($1), asIdent($3))
 	}
 
-index_col:
-	NAME_OB opt_asc_desc
+pk_col:
+	NAME_OB
 	{
 		$$ = $1
+	}
+
+cst_col_list:
+	cst_col
+	{
+		$$ = []ast.IndexCol{$1.(ast.IndexCol)}
+	}
+	| cst_col_list ',' cst_col
+	{
+		$$ = append(asIndexCols($1), $3.(ast.IndexCol))
+	}
+
+cst_col:
+	NAME_OB opt_col_length opt_asc_desc
+	{
+		$$ = asIndexCol($1, $3, $2)
 	}
 
 db_opts_opt:
@@ -2839,6 +3024,10 @@ db_opt:
 	{
 		$$ = dbOpts{charset: asIdentName($4)}
 	}
+	| DEFAULT CHARACTER SET COMP_EQ NAME_OB
+	{
+		$$ = dbOpts{charset: asIdentName($5)}
+	}
 	| DEFAULT COLLATE NAME_OB
 	{
 		$$ = dbOpts{collate: asIdentName($3)}
@@ -2846,6 +3035,10 @@ db_opt:
 	| CHARSET NAME_OB
 	{
 		$$ = dbOpts{charset: asIdentName($2)}
+	}
+	| CHARSET COMP_EQ NAME_OB
+	{
+		$$ = dbOpts{charset: asIdentName($3)}
 	}
 	| CHARACTER SET NAME_OB
 	{
@@ -3037,6 +3230,10 @@ alter_stmt:
 	| ALTER TABLEGROUP NAME_OB opt_cluster_options
 	{
 		$$ = &ast.AlterTablegroupStmt{Name: asIdentName($3), Options: asOptions($4)}
+	}
+	| ALTER TABLEGROUP NAME_OB ADD TABLE table_name
+	{
+		$$ = &ast.AlterTablegroupStmt{Name: asIdentName($3), AddTable: asIdent($6)}
 	}
 	| ALTER RESOURCE UNIT NAME_OB opt_cluster_options
 	{
@@ -3490,6 +3687,10 @@ priv_level:
 	{
 		$$ = asIdentName($1) + "." + asIdentName($3)
 	}
+	| NAME_OB
+	{
+		$$ = asIdentName($1)
+	}
 
 user_spec_list:
 	user_spec
@@ -3548,13 +3749,27 @@ rename_user_stmt:
 	}
 
 lock_user_stmt:
-	LOCK USER user_spec_list
+	LOCK USER user_spec_list opt_account_action
 	{
-		$$ = &ast.LockUserStmt{Users: asUserSpecs($3)}
+		$$ = &ast.LockUserStmt{AccountLock: asStr($4), Users: asUserSpecs($3)}
 	}
 	| UNLOCK USER user_spec_list
 	{
 		$$ = &ast.LockUserStmt{Unlock: true, Users: asUserSpecs($3)}
+	}
+
+opt_account_action:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| ACCOUNT LOCK
+	{
+		$$ = "LOCK"
+	}
+	| ACCOUNT UNLOCK
+	{
+		$$ = "UNLOCK"
 	}
 
 prepare_stmt:
@@ -4110,21 +4325,21 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddPartition, PartitionDefs: asPartitionDefs($4)}
 	}
-	| ADD INDEX NAME_OB '(' ident_list ')' opt_index_option_list
+	| ADD INDEX NAME_OB '(' index_col_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5), IndexOptions: asStringList($7)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7)}
 	}
-	| ADD KEY NAME_OB '(' ident_list ')' opt_index_option_list
+	| ADD KEY NAME_OB '(' index_col_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5), IndexOptions: asStringList($7)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7)}
 	}
-	| ADD UNIQUE INDEX NAME_OB '(' ident_list ')' opt_index_option_list
+	| ADD UNIQUE INDEX NAME_OB '(' index_col_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6), IndexOptions: asStringList($8)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8)}
 	}
-	| ADD UNIQUE KEY NAME_OB '(' ident_list ')' opt_index_option_list
+	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6), IndexOptions: asStringList($8)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8)}
 	}
 	| ADD CONSTRAINT NAME_OB constraint_body
 	{
@@ -4775,13 +4990,13 @@ show_body:
 	{
 		$$ = &ast.ShowStmt{Kind: "processlist"}
 	}
-	| COLLATION
+	| COLLATION like_opt opt_show_where
 	{
-		$$ = &ast.ShowStmt{Kind: "collation"}
+		$$ = &ast.ShowStmt{Kind: "collation", Like: asExpr($2), Where: asExpr($3)}
 	}
-	| ENGINES
+	| ENGINES like_opt opt_show_where
 	{
-		$$ = &ast.ShowStmt{Kind: "engines"}
+		$$ = &ast.ShowStmt{Kind: "engines", Like: asExpr($2), Where: asExpr($3)}
 	}
 	| STORAGE ENGINES
 	{
@@ -4838,6 +5053,14 @@ opt_show_where:
 	| WHERE expr
 	{
 		$$ = $2
+	}
+	| WHERE CHARSET COMP_EQ expr
+	{
+		$$ = bin("=", newIdent("Charset"), asExpr($4))
+	}
+	| WHERE COLLATION COMP_EQ expr
+	{
+		$$ = bin("=", newIdent("Collation"), asExpr($4))
 	}
 show_scope_opt:
 	/*empty*/
@@ -4929,7 +5152,16 @@ set_role_target:
 	{
 		$$ = []string{"DEFAULT"}
 	}
+	| ALL
+	{
+		$$ = []string{"ALL"}
+	}
 	| role_name_list
+	| ALL EXCEPT role_name_list
+	{
+		s := stringListText($3)
+		$$ = []string{"ALL EXCEPT " + s}
+	}
 
 opt_for_user:
 	/*empty*/
@@ -5060,6 +5292,10 @@ explain_stmt:
 	{
 		$$ = &ast.ExplainStmt{ExplainType: asStr($2), Stmt: asStmt($3)}
 	}
+	| EXPLAIN FOR CONNECTION expr
+	{
+		$$ = &ast.ExplainStmt{ExplainType: "FOR CONNECTION " + exprText(asExpr($4))}
+	}
 
 opt_explain_type:
 	/*empty*/
@@ -5123,19 +5359,33 @@ opt_start_read:
 	}
 
 commit_stmt:
-	COMMIT opt_work
+	COMMIT opt_work opt_chain
 	{
-		$$ = &ast.CommitStmt{Work: asBool($2)}
+		$$ = &ast.CommitStmt{Work: asBool($2), Chain: asStr($3) == "CHAIN", Release: asStr($3) == "RELEASE"}
 	}
 
 rollback_stmt:
-	ROLLBACK opt_work
+	ROLLBACK opt_work opt_chain
 	{
-		$$ = &ast.RollbackStmt{Work: asBool($2)}
+		$$ = &ast.RollbackStmt{Work: asBool($2), Chain: asStr($3) == "CHAIN", Release: asStr($3) == "RELEASE"}
 	}
 	| ROLLBACK opt_work TO savepoint_kw NAME_OB
 	{
 		$$ = &ast.RollbackToSavepointStmt{Work: asBool($2), Name: asIdentName($5)}
+	}
+
+opt_chain:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| AND CHAIN
+	{
+		$$ = "CHAIN"
+	}
+	| AND RELEASE
+	{
+		$$ = "RELEASE"
 	}
 
 savepoint_kw:

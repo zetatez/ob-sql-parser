@@ -183,6 +183,32 @@ func (f *formatter) columnDef(c *ast.ColumnDef) string {
 		sb.WriteString(" COLLATE ")
 		sb.WriteString(c.Collate)
 	}
+	if c.PrimaryKey {
+		sb.WriteString(" PRIMARY KEY")
+	}
+	if c.UniqueKey {
+		sb.WriteString(" UNIQUE")
+	}
+	if c.RefTable != nil {
+		sb.WriteString(" REFERENCES ")
+		sb.WriteString(f.ident(c.RefTable))
+		if len(c.RefColumns) > 0 {
+			sb.WriteString(" (")
+			for i, col := range c.RefColumns {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(f.ident(col))
+			}
+			sb.WriteString(")")
+		}
+		if c.OnDelete != "" {
+			sb.WriteString(" ON DELETE " + c.OnDelete)
+		}
+		if c.FkOnUpdate != "" {
+			sb.WriteString(" ON UPDATE " + c.FkOnUpdate)
+		}
+	}
 	return sb.String()
 }
 func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
@@ -196,7 +222,11 @@ func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
 	case "PRIMARY KEY":
 		sb.WriteString("PRIMARY KEY ")
 	case "UNIQUE":
-		sb.WriteString("UNIQUE ")
+		if len(c.IndexCols) > 0 {
+			sb.WriteString("UNIQUE KEY ")
+		} else {
+			sb.WriteString("UNIQUE ")
+		}
 	case "FOREIGN KEY":
 		sb.WriteString("FOREIGN KEY ")
 	case "CHECK":
@@ -210,11 +240,28 @@ func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
 		sb.WriteString("KEY ")
 	}
 	sb.WriteString("(")
-	for i, col := range c.Columns {
-		if i > 0 {
-			sb.WriteString(", ")
+	if len(c.IndexCols) > 0 {
+		for i, col := range c.IndexCols {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(f.ident(col.Name))
+			if col.Length != nil {
+				sb.WriteString("(" + f.exprString(col.Length) + ")")
+			}
+			if col.Desc {
+				sb.WriteString(" DESC")
+			} else if col.HasOrder {
+				sb.WriteString(" ASC")
+			}
 		}
-		sb.WriteString(f.ident(col))
+	} else {
+		for i, col := range c.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(f.ident(col))
+		}
 	}
 	sb.WriteString(")")
 	if c.Kind == "FOREIGN KEY" && c.RefTable != nil {
@@ -286,7 +333,11 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		if a.Name != "" {
 			f.printf("%s ", f.quoteIfNeeded(a.Name))
 		}
-		f.colsParen(a.Columns)
+		if len(a.IndexCols) > 0 {
+			f.indexColsParen(a.IndexCols)
+		} else {
+			f.colsParen(a.Columns)
+		}
 		for _, o := range a.IndexOptions {
 			f.printf(" %s", o)
 		}
@@ -420,6 +471,26 @@ func (f *formatter) colPosition(a *ast.AlterAction) {
 	if a.Position == "AFTER" && a.RefCol != "" {
 		f.printf(" %s", f.quoteIfNeeded(a.RefCol))
 	}
+}
+
+// indexColsParen 打印索引列列表（含前缀长度与排序方向）。
+func (f *formatter) indexColsParen(cols []ast.IndexCol) {
+	f.raw("(")
+	for i, c := range cols {
+		if i > 0 {
+			f.raw(", ")
+		}
+		f.raw(f.ident(c.Name))
+		if c.Length != nil {
+			f.printf("(%s)", f.exprString(c.Length))
+		}
+		if c.Desc {
+			f.raw(" DESC")
+		} else if c.HasOrder {
+			f.raw(" ASC")
+		}
+	}
+	f.raw(")")
 }
 
 // idents 以逗号分隔打印标识符列表（RETURNING 等）。

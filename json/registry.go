@@ -29,6 +29,8 @@ func newNode(kind string) ast.Node {
 		return &ast.AlterTableStmt{}
 	case "AlterTenantStmt":
 		return &ast.AlterTenantStmt{}
+	case "AlterUserStmt":
+		return &ast.AlterUserStmt{}
 	case "AlterViewStmt":
 		return &ast.AlterViewStmt{}
 	case "AuditStmt":

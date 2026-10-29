@@ -17,6 +17,14 @@ type ColumnDef struct {
 	Invisible       bool
 	Generated       Expression // GENERATED ALWAYS AS (expr)
 	GeneratedStored bool       // true = STORED, false = VIRTUAL
+
+	// 列级约束
+	PrimaryKey bool
+	UniqueKey  bool
+	RefTable   *Identifier // 列级 REFERENCES
+	RefColumns []*Identifier
+	OnDelete   string
+	FkOnUpdate string
 }
 
 // Nullable is a tri-state column nullability.
@@ -43,6 +51,7 @@ type ConstraintDef struct {
 	Name       string
 	Kind       string        // "PRIMARY KEY","UNIQUE","KEY","INDEX","FOREIGN KEY","CHECK"
 	Columns    []*Identifier // index/pr key columns (as names)
+	IndexCols  []IndexCol    // KEY/INDEX/UNIQUE 带顺序/长度的列
 	Check      Expression    // CHECK (expr)
 	IndexType  string
 	RefTable   *Identifier   // FOREIGN KEY ... REFERENCES table
@@ -267,8 +276,9 @@ type AlterTablespaceStmt struct {
 // AlterTablegroupStmt is ALTER TABLEGROUP.
 type AlterTablegroupStmt struct {
 	Base
-	Name    string
-	Options []Option
+	Name     string
+	Options  []Option
+	AddTable *Identifier // ALTER TABLEGROUP ... ADD TABLE t
 }
 
 // CreateMViewStmt is CREATE MATERIALIZED VIEW.
@@ -317,13 +327,25 @@ type CreateTableLikeStmt struct {
 }
 
 // CreateIndexStmt is CREATE [UNIQUE] INDEX.
+// CreateIndexStmt is CREATE [UNIQUE] INDEX.
 type CreateIndexStmt struct {
 	Base
-	Unique    bool
-	Name      *Identifier
-	Table     *Identifier
-	Columns   []*Identifier
-	IndexType string
+	Unique      bool
+	IfNotExists bool
+	Name        *Identifier
+	Table       *Identifier
+	Columns     []IndexCol
+	Method      string   // USING BTREE/HASH
+	Options     []string // GLOBAL/LOCAL/KEY_BLOCK_SIZE/COMMENT/...
+	Partition   *PartitionSpec
+}
+
+// IndexCol 是索引列：可带前缀长度与排序方向。
+type IndexCol struct {
+	Name     *Identifier
+	Length   Expression // a(10)
+	Desc     bool
+	HasOrder bool // 显式 ASC/DESC
 }
 
 // DropTableStmt is DROP TABLE.
@@ -396,6 +418,7 @@ type AlterAction struct {
 	Collate      string
 	IndexOptions []string // ADD INDEX ... LOCAL/GLOBAL/COMMENT '..'/KEY_BLOCK_SIZE=n
 	Visible      bool     // ALTER INDEX ... VISIBLE/INVISIBLE
+	IndexCols    []IndexCol
 
 	// partition operations
 	PartitionDefs []PartitionDef

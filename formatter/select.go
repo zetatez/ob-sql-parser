@@ -112,9 +112,23 @@ func (f *formatter) selectBody(b *ast.SelectBody) {
 		f.nl()
 		f.limit(b.Limit)
 	}
+	if len(b.NamedWindow) > 0 {
+		f.nl()
+		f.raw("WINDOW ")
+		for i, w := range b.NamedWindow {
+			if i > 0 {
+				f.raw(", ")
+			}
+			f.printf("%s AS (%s)", w.Name, f.windowSpecInner(w.Spec))
+		}
+	}
 	if b.InShareMode {
 		f.nl()
-		f.raw("LOCK IN SHARE MODE")
+		if b.LockWait == "SHARE" {
+			f.raw("FOR SHARE")
+		} else {
+			f.raw("LOCK IN SHARE MODE")
+		}
 	}
 	if b.ForUpdate {
 		f.nl()

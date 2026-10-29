@@ -875,6 +875,102 @@ func TestAlterTableExtras(t *testing.T) {
 	}
 }
 
+func TestDDLDMLExtras3(t *testing.T) {
+	// CREATE INDEX 完整形态
+	st := parseAll(t, "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)")
+	ci := st[0].(*ast.CreateIndexStmt)
+	if ci.Method != "BTREE" || len(ci.Columns) != 2 || !ci.Columns[0].Desc || ci.Columns[0].Length == nil {
+		t.Fatalf("create index: %+v", ci)
+	}
+	if got := formatter.Format(st[0]); got != "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)" {
+		t.Fatalf("create index format: %s", got)
+	}
+	if st := parseAll(t, "CREATE INDEX IF NOT EXISTS idx ON t (a)"); !st[0].(*ast.CreateIndexStmt).IfNotExists {
+		t.Fatal("IF NOT EXISTS not preserved")
+	}
+
+	// GRANT 单选表 priv_level（此前只支持 db.t / *.*）
+	st = parseAll(t, "GRANT SELECT ON t TO 'u'@'%', 'v'@'host'")
+	g := st[0].(*ast.GrantStmt)
+	if g.Level != "t" || len(g.Users) != 2 {
+		t.Fatalf("grant: %+v", g)
+	}
+
+	// ALTER USER / LOCK USER ACCOUNT
+	st = parseAll(t, "ALTER USER 'u'@'%' IDENTIFIED BY 'newpw'")
+	if st[0].(*ast.AlterUserStmt).Password != "newpw" {
+		t.Fatal("alter user password lost")
+	}
+	st = parseAll(t, "LOCK USER 'u'@'%' ACCOUNT LOCK")
+	if st[0].(*ast.LockUserStmt).AccountLock != "LOCK" {
+		t.Fatal("ACCOUNT LOCK lost")
+	}
+
+	// 序列 NOCACHE / NOCYCLE / NOORDER
+	st = parseAll(t, "CREATE SEQUENCE s NOCACHE NOCYCLE NOORDER")
+	if got := formatter.Format(st[0]); got != "CREATE SEQUENCE s NOCACHE NOCYCLE NOORDER" {
+		t.Fatalf("sequence format: %s", got)
+	}
+
+	// 列级约束（PK/UNIQUE/REFERENCES）
+	st = parseAll(t, "CREATE TABLE t (a INT PRIMARY KEY, b INT UNIQUE, c INT REFERENCES p (x) ON DELETE CASCADE)")
+	cols := st[0].(*ast.CreateTableStmt).Columns
+	if !cols[0].PrimaryKey || !cols[1].UniqueKey || cols[2].RefTable == nil || cols[2].OnDelete != "CASCADE" {
+		t.Fatalf("column constraints: %+v", cols)
+	}
+
+	// SET ROLE ALL / DEFAULT / ALL EXCEPT
+	st = parseAll(t, "SET ROLE ALL")
+	if st[0].(*ast.SetRoleStmt).Roles[0] != "ALL" {
+		t.Fatal("SET ROLE ALL")
+	}
+
+	// INSERT 修饰符
+	st = parseAll(t, "INSERT LOW_PRIORITY INTO t (a) VALUES (1)")
+	if st[0].(*ast.InsertStmt).Mods != "LOW_PRIORITY" {
+		t.Fatal("insert mod lost")
+	}
+
+	// COMMIT / ROLLBACK AND CHAIN|RELEASE
+	st = parseAll(t, "COMMIT WORK AND CHAIN")
+	if !st[0].(*ast.CommitStmt).Chain {
+		t.Fatal("commit chain")
+	}
+	st = parseAll(t, "ROLLBACK WORK AND RELEASE")
+	if !st[0].(*ast.RollbackStmt).Release {
+		t.Fatal("rollback release")
+	}
+
+	// WINDOW 命名引用 + 定义 双向
+	st = parseAll(t, "SELECT ROW_NUMBER() OVER w FROM t WINDOW w AS (PARTITION BY a)")
+	sel := st[0].(*ast.SelectStmt)
+	if len(sel.Bodies[0].NamedWindow) != 1 || sel.Bodies[0].NamedWindow[0].Name != "w" {
+		t.Fatalf("named window: %+v", sel.Bodies[0].NamedWindow)
+	}
+
+	// FOR SHARE / STRAIGHT_JOIN
+	st = parseAll(t, "SELECT * FROM t FOR SHARE")
+	if got := formatter.Format(st[0]); got != "SELECT * FROM t FOR SHARE" {
+		t.Fatalf("for share: %s", got)
+	}
+	st = parseAll(t, "SELECT * FROM t STRAIGHT_JOIN u ON t.id = u.id")
+	if st[0].(*ast.SelectStmt).Bodies[0].From[0].RefKind != ast.RefJoin {
+		t.Fatal("straight join not parsed as join")
+	}
+
+	// ROW() 构造器
+	st = parseAll(t, "INSERT INTO t (a, b) VALUES (ROW(1, 2))")
+	if st[0].(*ast.InsertStmt) == nil {
+		t.Fatal("row constructor")
+	}
+
+	// SHOW ... WHERE（关键字列名）
+	st = parseAll(t, "SHOW COLLATION WHERE Charset = 'utf8mb4'")
+	if st[0].(*ast.ShowStmt).Where == nil {
+		t.Fatal("show where lost")
+	}
+}
+
 func TestUpdateDeleteExtras(t *testing.T) {
 	// UPDATE LOW_PRIORITY + RETURNING
 	st := parseAll(t, "UPDATE LOW_PRIORITY t SET a = 1 WHERE id = 2 RETURNING id, a")

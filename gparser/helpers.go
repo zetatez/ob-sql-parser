@@ -32,6 +32,19 @@ type colAttrs struct {
 	generated     ast.Expression
 	genStored     bool
 	hasGenerated  bool
+	primaryKey    bool
+	uniqueKey     bool
+	ref           fkRef
+	hasRef        bool
+}
+
+// asIndexCol 组装一个索引列（可带前缀长度与排序方向）。
+func asIndexCol(name interface{}, desc interface{}, length interface{}) ast.IndexCol {
+	c := ast.IndexCol{Name: asIdent(name), Desc: asBool(desc), HasOrder: asBool(desc)}
+	if e := asExpr(length); e != nil {
+		c.Length = e
+	}
+	return c
 }
 
 // nullsOpt is the parsed NULLS FIRST/LAST ordering option.
@@ -314,6 +327,13 @@ type refActions struct {
 	onUpdate string
 }
 
+// alterUserSuffix 是 ALTER USER ... 的尾部（IDENTIFIED / ACCOUNT）。
+type alterUserSuffix struct {
+	pwd     string
+	plugin  string
+	account string
+}
+
 // dbOpts accumulates CREATE DATABASE options.
 type dbOpts struct {
 	charset string
@@ -563,6 +583,14 @@ func buildColumnDef(name interface{}, dt interface{}, attrs interface{}) *ast.Co
 			cd.Generated = a.generated
 			cd.GeneratedStored = a.genStored
 		}
+		cd.PrimaryKey = a.primaryKey
+		cd.UniqueKey = a.uniqueKey
+		if a.hasRef {
+			cd.RefTable = a.ref.table
+			cd.RefColumns = a.ref.cols
+			cd.OnDelete = a.ref.onDelete
+			cd.FkOnUpdate = a.ref.onUpdate
+		}
 	}
 	return cd
 }
@@ -623,6 +651,13 @@ func asIndexHints(v interface{}) []ast.IndexHint {
 	}
 	return nil
 }
+func stringListText(v interface{}) string {
+	if s, ok := v.([]string); ok {
+		return strings.Join(s, ", ")
+	}
+	return ""
+}
+
 func asStringList(v interface{}) []string {
 	if s, ok := v.([]string); ok {
 		return s
@@ -701,6 +736,20 @@ func asPartitionValues(v interface{}) partitionValues {
 		return p
 	}
 	return partitionValues{}
+}
+
+func asPartitionSpec(v interface{}) *ast.PartitionSpec {
+	if p, ok := v.(*ast.PartitionSpec); ok {
+		return p
+	}
+	return nil
+}
+
+func asIndexCols(v interface{}) []ast.IndexCol {
+	if s, ok := v.([]ast.IndexCol); ok {
+		return s
+	}
+	return nil
 }
 func asGroupOpt(v interface{}) groupOpt {
 	if g, ok := v.(groupOpt); ok {
@@ -788,6 +837,16 @@ func mergeAttrs(a, b *colAttrs) *colAttrs {
 	}
 	if b.zerofill {
 		a.zerofill = true
+	}
+	if b.primaryKey {
+		a.primaryKey = true
+	}
+	if b.uniqueKey {
+		a.uniqueKey = true
+	}
+	if b.hasRef {
+		a.ref = b.ref
+		a.hasRef = true
 	}
 	if b.invisible {
 		a.invisible = true

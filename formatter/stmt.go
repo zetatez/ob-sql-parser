@@ -410,6 +410,9 @@ func (f *formatter) stmt(s ast.Statement) {
 			f.raw("LOCK USER ")
 		}
 		f.userSpecs(v.Users)
+		if v.AccountLock != "" {
+			f.printf(" ACCOUNT %s", stringsUpper(v.AccountLock))
+		}
 	case *ast.CreateViewStmt:
 		f.raw("CREATE ")
 		if v.OrReplace {
@@ -777,8 +780,23 @@ func (f *formatter) stmt(s ast.Statement) {
 		if v.Unique {
 			f.raw("UNIQUE ")
 		}
-		f.printf("INDEX %s ON %s ", f.ident(v.Name), f.ident(v.Table))
-		f.colsParen(v.Columns)
+		f.raw("INDEX ")
+		if v.IfNotExists {
+			f.raw("IF NOT EXISTS ")
+		}
+		f.printf("%s ", f.ident(v.Name))
+		if v.Method != "" {
+			f.printf("USING %s ", v.Method)
+		}
+		f.printf("ON %s ", f.ident(v.Table))
+		f.indexColsParen(v.Columns)
+		for _, o := range v.Options {
+			f.printf(" %s", o)
+		}
+		if v.Partition != nil {
+			f.raw(" ")
+			f.partitionSpec(v.Partition)
+		}
 	case *ast.DropTableStmt:
 		f.printf("DROP TABLE ")
 		if v.IfExists {
@@ -818,10 +836,44 @@ func (f *formatter) stmt(s ast.Statement) {
 		f.raw("BEGIN")
 	case *ast.CommitStmt:
 		f.raw("COMMIT")
+		if v.Work {
+			f.raw(" WORK")
+		}
+		if v.Chain {
+			f.raw(" AND CHAIN")
+		}
+		if v.Release {
+			f.raw(" AND RELEASE")
+		}
 	case *ast.RollbackStmt:
 		f.raw("ROLLBACK")
 		if v.Work {
 			f.raw(" WORK")
+		}
+		if v.Chain {
+			f.raw(" AND CHAIN")
+		}
+		if v.Release {
+			f.raw(" AND RELEASE")
+		}
+	case *ast.AlterUserStmt:
+		f.raw("ALTER USER ")
+		f.userSpecs(v.Users)
+		if v.Password != "" {
+			if v.Plugin != "" {
+				f.printf(" IDENTIFIED WITH %s BY ", stringsUpper(v.Plugin))
+				f.raw(f.stringLiteral(v.Password))
+			} else if v.Password == "RANDOM PASSWORD" {
+				f.raw(" IDENTIFIED BY RANDOM PASSWORD")
+			} else {
+				f.raw(" IDENTIFIED BY ")
+				f.raw(f.stringLiteral(v.Password))
+			}
+		} else if v.Plugin != "" {
+			f.printf(" IDENTIFIED WITH %s", stringsUpper(v.Plugin))
+		}
+		if v.Account != "" {
+			f.printf(" ACCOUNT %s", stringsUpper(v.Account))
 		}
 	case *ast.SetTransactionStmt:
 		f.raw("SET ")
@@ -874,15 +926,21 @@ func writeSequenceOpts(f *formatter, startWith, incrementBy, minValue, maxValue,
 		f.raw(" INCREMENT BY ")
 		f.expr(incrementBy)
 	}
-	if minValue != nil {
+	if isNoValue(minValue) {
+		f.raw(" " + minValue.(*ast.Literal).Text)
+	} else if minValue != nil {
 		f.raw(" MINVALUE ")
 		f.expr(minValue)
 	}
-	if maxValue != nil {
+	if isNoValue(maxValue) {
+		f.raw(" " + maxValue.(*ast.Literal).Text)
+	} else if maxValue != nil {
 		f.raw(" MAXVALUE ")
 		f.expr(maxValue)
 	}
-	if cache != nil {
+	if isNoValue(cache) {
+		f.raw(" " + cache.(*ast.Literal).Text)
+	} else if cache != nil {
 		f.raw(" CACHE ")
 		f.expr(cache)
 	}
@@ -892,6 +950,14 @@ func writeSequenceOpts(f *formatter, startWith, incrementBy, minValue, maxValue,
 	if order != "" {
 		f.printf(" %s", order)
 	}
+}
+
+// isNoValue 判断是否为 NOCACHE/NOMINVALUE/NOMAXVALUE 等占位字面量。
+func isNoValue(e ast.Expression) bool {
+	if l, ok := e.(*ast.Literal); ok && l.LitType == ast.LitNull && l.Text != "" {
+		return true
+	}
+	return false
 }
 
 // showKindNeedsFrom reports whether the SHOW kind takes a FROM <table> target

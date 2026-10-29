@@ -10,6 +10,7 @@ type Assignment struct {
 type InsertStmt struct {
 	Base
 	Replace     bool
+	Mods        string // "","LOW_PRIORITY","HIGH_PRIORITY","DELAYED"
 	Ignore      bool
 	Table       *Identifier
 	Columns     []*Identifier

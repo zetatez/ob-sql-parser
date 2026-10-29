@@ -24,6 +24,15 @@ type DropUserStmt struct {
 	Users    []UserSpec
 }
 
+// AlterUserStmt is ALTER USER ... IDENTIFIED BY/ACCOUNT LOCK.
+type AlterUserStmt struct {
+	Base
+	Users    []UserSpec
+	Password string // IDENTIFIED BY 'pw'（含 RANDOM PASSWORD 原文）
+	Plugin   string
+	Account  string // "","LOCK","UNLOCK"
+}
+
 // Option is a generic NAME = value | NAME = (v1, v2) option (cluster admin).
 type Option struct {
 	Name   string
@@ -359,8 +368,9 @@ type RenameUserStmt struct {
 // LockUserStmt is LOCK USER / UNLOCK USER.
 type LockUserStmt struct {
 	Base
-	Unlock bool
-	Users  []UserSpec
+	Unlock      bool
+	AccountLock string // "","LOCK","UNLOCK" (ACCOUNT LOCK/UNLOCK)
+	Users       []UserSpec
 }
 
 // XAStmt is an XA transaction control statement.
@@ -542,13 +552,17 @@ type BeginStmt struct {
 // CommitStmt is COMMIT.
 type CommitStmt struct {
 	Base
-	Work bool
+	Work    bool
+	Chain   bool // AND CHAIN
+	Release bool // AND RELEASE
 }
 
 // RollbackStmt is ROLLBACK.
 type RollbackStmt struct {
 	Base
-	Work bool
+	Work    bool
+	Chain   bool // AND CHAIN
+	Release bool // AND RELEASE
 }
 
 // SetTransactionStmt is SET [GLOBAL|SESSION] TRANSACTION <characteristics>.

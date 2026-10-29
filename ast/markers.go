@@ -76,6 +76,7 @@ func (n *LoadDataStmt) statementNode()            {}
 func (n *LocationUtilsStmt) statementNode()       {}
 func (n *LockTablesStmt) statementNode()          {}
 func (n *LockUserStmt) statementNode()            {}
+func (n *AlterUserStmt) statementNode()           {}
 func (n *MergeStmt) statementNode()               {}
 func (n *MLogStmt) statementNode()                {}
 func (n *PrepareStmt) statementNode()             {}

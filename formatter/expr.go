@@ -182,8 +182,26 @@ func (f *formatter) funcString(v *ast.FuncCall) string {
 	return sb.String()
 }
 func (f *formatter) windowSpecString(w *ast.WindowSpec) string {
+	if w == nil {
+		return ""
+	}
+	if w.Name != "" {
+		// 命名窗口引用：OVER w（不带括号，与 OVER (…) 区分）
+		return " OVER " + w.Name
+	}
 	var sb strings.Builder
 	sb.WriteString(" OVER(")
+	sb.WriteString(f.windowSpecInner(w))
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// windowSpecInner 渲染 OVER 括号内的窗口规格文本。
+func (f *formatter) windowSpecInner(w *ast.WindowSpec) string {
+	if w == nil {
+		return ""
+	}
+	var sb strings.Builder
 	if w.Name != "" {
 		sb.WriteString(w.Name)
 	}
@@ -221,7 +239,6 @@ func (f *formatter) windowSpecString(w *ast.WindowSpec) string {
 			sb.WriteString(w.FrameStart)
 		}
 	}
-	sb.WriteString(")")
 	return sb.String()
 }
 func (f *formatter) castString(v *ast.CastExpr) string {

@@ -8,6 +8,9 @@ func (f *formatter) insertStmt(v *ast.InsertStmt) {
 	} else {
 		f.raw("INSERT ")
 	}
+	if v.Mods != "" {
+		f.raw(v.Mods + " ")
+	}
 	if v.Ignore {
 		f.raw("IGNORE ")
 	}
