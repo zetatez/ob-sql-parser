@@ -106,14 +106,18 @@ func (f *formatter) partitionDef(pd *ast.PartitionDef) {
 	if pd.ValueKind != "" {
 		f.raw(" VALUES ")
 		f.raw(pd.ValueKind)
-		f.raw(" (")
-		for i, v := range pd.Values {
-			if i > 0 {
-				f.raw(", ")
+		if pd.MaxValue {
+			f.raw(" MAXVALUE")
+		} else {
+			f.raw(" (")
+			for i, v := range pd.Values {
+				if i > 0 {
+					f.raw(", ")
+				}
+				f.expr(v)
 			}
-			f.expr(v)
+			f.raw(")")
 		}
-		f.raw(")")
 	}
 	for _, o := range pd.Options {
 		f.printf(" %s=%s", stringsUpper(o.Name), o.Value)
@@ -136,6 +140,9 @@ func (f *formatter) columnDef(c *ast.ColumnDef) string {
 	}
 	if c.Unsigned {
 		sb.WriteString(" UNSIGNED")
+	}
+	if c.Zerofill {
+		sb.WriteString(" ZEROFILL")
 	}
 	if c.Generated != nil {
 		sb.WriteString(" GENERATED ALWAYS AS (")
@@ -210,6 +217,26 @@ func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
 		sb.WriteString(f.ident(col))
 	}
 	sb.WriteString(")")
+	if c.Kind == "FOREIGN KEY" && c.RefTable != nil {
+		sb.WriteString(" REFERENCES ")
+		sb.WriteString(f.ident(c.RefTable))
+		if len(c.RefColumns) > 0 {
+			sb.WriteString(" (")
+			for i, col := range c.RefColumns {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(f.ident(col))
+			}
+			sb.WriteString(")")
+		}
+		if c.OnDelete != "" {
+			sb.WriteString(" ON DELETE " + c.OnDelete)
+		}
+		if c.OnUpdate != "" {
+			sb.WriteString(" ON UPDATE " + c.OnUpdate)
+		}
+	}
 	return sb.String()
 }
 func (f *formatter) alterTable(v *ast.AlterTableStmt) {
@@ -260,6 +287,9 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 			f.printf("%s ", f.quoteIfNeeded(a.Name))
 		}
 		f.colsParen(a.Columns)
+		for _, o := range a.IndexOptions {
+			f.printf(" %s", o)
+		}
 	case ast.AlterDropIndex:
 		f.printf("DROP INDEX %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterRenameIndex:
@@ -317,7 +347,7 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 	case ast.AlterRemovePartitioning:
 		f.raw("REMOVE PARTITIONING")
 	case ast.AlterAddColumns:
-		f.raw("ADD (")
+		f.raw("ADD COLUMN (")
 		for i, cd := range a.ColumnDefs {
 			if i > 0 {
 				f.raw(", ")
@@ -333,6 +363,14 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 	case ast.AlterAutoIncrement:
 		f.raw("AUTO_INCREMENT = ")
 		f.expr(a.Count)
+	case ast.AlterVisibleIndex:
+		f.printf("ALTER INDEX %s VISIBLE", f.quoteIfNeeded(a.Name))
+	case ast.AlterInvisibleIndex:
+		f.printf("ALTER INDEX %s INVISIBLE", f.quoteIfNeeded(a.Name))
+	case ast.AlterEnableKeys:
+		f.raw("ENABLE KEYS")
+	case ast.AlterDisableKeys:
+		f.raw("DISABLE KEYS")
 	}
 }
 func (f *formatter) propKV(o *ast.Option) {
@@ -383,6 +421,17 @@ func (f *formatter) colPosition(a *ast.AlterAction) {
 		f.printf(" %s", f.quoteIfNeeded(a.RefCol))
 	}
 }
+
+// idents 以逗号分隔打印标识符列表（RETURNING 等）。
+func (f *formatter) idents(cols []*ast.Identifier) {
+	for i, c := range cols {
+		if i > 0 {
+			f.raw(", ")
+		}
+		f.raw(f.ident(c))
+	}
+}
+
 func (f *formatter) colsParen(cols []*ast.Identifier) {
 	f.raw("(")
 	for i, c := range cols {

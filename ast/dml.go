@@ -23,23 +23,27 @@ type InsertStmt struct {
 // UpdateStmt is UPDATE.
 type UpdateStmt struct {
 	Base
-	Ignore  bool
-	Tables  []*TableRef
-	Set     []Assignment
-	Where   Expression
-	OrderBy []OrderItem
-	Limit   *LimitClause
+	Ignore      bool
+	LowPriority bool
+	Tables      []*TableRef
+	Set         []Assignment
+	Where       Expression
+	OrderBy     []OrderItem
+	Limit       *LimitClause
+	Returning   []*Identifier
 }
 
 // DeleteStmt is DELETE.
 type DeleteStmt struct {
 	Base
-	Tables  []*Identifier
-	From    []*TableRef
-	Using   []*TableRef
-	Where   Expression
-	OrderBy []OrderItem
-	Limit   *LimitClause
+	Mods      string        // "","LOW_PRIORITY","QUICK","IGNORE"
+	Tables    []*Identifier // 多表删除的目标表列表（DELETE t1, t2 FROM ...）
+	From      []*TableRef
+	Using     []*TableRef
+	Where     Expression
+	OrderBy   []OrderItem
+	Limit     *LimitClause
+	Returning []*Identifier
 }
 
 // MergeWhen is one WHEN [NOT] MATCHED branch of MERGE.

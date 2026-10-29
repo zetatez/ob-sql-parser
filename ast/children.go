@@ -268,14 +268,28 @@ func (n *UpdateStmt) Children() []Node {
 		out = append(out, n.Set[i].Expr)
 	}
 	out = append(out, n.Where)
+	out = append(out, idNodes(n.Returning)...)
 	return out
 }
 
 func (n *DeleteStmt) Children() []Node {
 	var out []Node
+	out = append(out, idNodes(n.Tables)...)
 	out = append(out, inode(n.From)...)
 	out = append(out, inode(n.Using)...)
 	out = append(out, n.Where)
+	out = append(out, idNodes(n.Returning)...)
+	return out
+}
+
+// idNodes converts []*Identifier to []Node (nil-safe).
+func idNodes(ids []*Identifier) []Node {
+	out := make([]Node, 0, len(ids))
+	for _, id := range ids {
+		if id != nil {
+			out = append(out, id)
+		}
+	}
 	return out
 }
 
@@ -286,6 +300,8 @@ func (n *CreateTableStmt) Children() []Node {
 	}
 	for _, k := range n.Constraints {
 		out = append(out, childrenOf(k.Check)...)
+		out = append(out, idNodes([]*Identifier{k.RefTable})...)
+		out = append(out, idNodes(k.RefColumns)...)
 	}
 	if n.Select != nil {
 		out = append(out, n.Select)

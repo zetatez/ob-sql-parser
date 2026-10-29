@@ -63,6 +63,12 @@ func (f *formatter) insertStmt(v *ast.InsertStmt) {
 }
 func (f *formatter) updateStmt(v *ast.UpdateStmt) {
 	f.raw("UPDATE ")
+	if v.LowPriority {
+		f.raw("LOW_PRIORITY ")
+	}
+	if v.Ignore {
+		f.raw("IGNORE ")
+	}
 	for i, t := range v.Tables {
 		if i > 0 {
 			f.raw(", ")
@@ -83,14 +89,42 @@ func (f *formatter) updateStmt(v *ast.UpdateStmt) {
 		f.raw(" ")
 		f.limit(v.Limit)
 	}
+	if len(v.Returning) > 0 {
+		f.raw(" RETURNING ")
+		f.idents(v.Returning)
+	}
 }
 func (f *formatter) deleteStmt(v *ast.DeleteStmt) {
-	f.raw("DELETE FROM ")
+	f.raw("DELETE ")
+	if v.Mods != "" {
+		f.raw(v.Mods + " ")
+	}
+	if len(v.Tables) > 0 {
+		// 多表删除：DELETE t1, t2 FROM ...
+		for i, t := range v.Tables {
+			if i > 0 {
+				f.raw(", ")
+			}
+			f.raw(f.ident(t))
+		}
+		f.raw(" FROM ")
+	} else {
+		f.raw("FROM ")
+	}
 	for i, t := range v.From {
 		if i > 0 {
 			f.raw(", ")
 		}
 		f.tableRef(t)
+	}
+	if len(v.Using) > 0 {
+		f.raw(" USING ")
+		for i, t := range v.Using {
+			if i > 0 {
+				f.raw(", ")
+			}
+			f.tableRef(t)
+		}
 	}
 	if v.Where != nil {
 		f.raw(" WHERE ")
@@ -103,6 +137,10 @@ func (f *formatter) deleteStmt(v *ast.DeleteStmt) {
 	if v.Limit != nil {
 		f.raw(" ")
 		f.limit(v.Limit)
+	}
+	if len(v.Returning) > 0 {
+		f.raw(" RETURNING ")
+		f.idents(v.Returning)
 	}
 }
 func (f *formatter) assignments(assigns []ast.Assignment) {

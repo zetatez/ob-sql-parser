@@ -599,6 +599,33 @@ func TestExtraRoundTrip(t *testing.T) {
 		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) USE_BLOOM_FILTER = FALSE",
 		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) USE_BLOOM_FILTER = TRUE",
 		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) COMPRESSION = 'zstd' USE_BLOOM_FILTER = FALSE",
+		// 常用 DDL/DML 补齐（本轮）
+		"CREATE TABLE t (id INT, name VARCHAR(50), CONSTRAINT fk FOREIGN KEY (id) REFERENCES p (pid) ON DELETE CASCADE ON UPDATE RESTRICT)",
+		"CREATE TABLE t (id INT, name VARCHAR(50), CONSTRAINT fk FOREIGN KEY (id) REFERENCES p (pid) ON DELETE SET NULL)",
+		"CREATE TABLE t (id INT) COMMENT = 'table comment'",
+		"CREATE TABLE t (id INT) ROW_FORMAT = DYNAMIC COMPRESSION = 'zstd' REPLICA_NUM = 3",
+		"CREATE TABLE t (id INT, PRIMARY KEY (id)) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+		"CREATE TABLE t (id INT UNSIGNED ZEROFILL)",
+		"CREATE TABLE t (id INT) PARTITION BY LIST (id) SUBPARTITION BY HASH (id) SUBPARTITIONS 2",
+		"CREATE TABLE t2 AS SELECT a, b FROM t1",
+		"CREATE TEMPORARY TABLE t (id INT)",
+		"ALTER TABLE t ADD COLUMN (c1 INT, c2 VARCHAR(10))",
+		"ALTER TABLE t ADD INDEX idx (a) LOCAL",
+		"ALTER TABLE t ADD INDEX idx (a) KEY_BLOCK_SIZE = 16 COMMENT 'idx'",
+		"ALTER TABLE t ADD UNIQUE KEY uq (a, b)",
+		"ALTER TABLE t ALTER INDEX idx INVISIBLE",
+		"ALTER TABLE t ALTER INDEX idx VISIBLE",
+		"ALTER TABLE t ENABLE KEYS",
+		"ALTER TABLE t DISABLE KEYS",
+		"ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES p (id) ON DELETE RESTRICT ON UPDATE CASCADE",
+		"UPDATE LOW_PRIORITY t SET a = 1",
+		"UPDATE IGNORE t SET a = 1 WHERE b = 2",
+		"UPDATE t SET a = 1 WHERE id = 2 RETURNING id, a",
+		"DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t2.x = 1",
+		"DELETE t1, t2 FROM t1 JOIN t2 ON t1.id = t2.id",
+		"DELETE FROM t1, t2 USING t1 JOIN t2 ON t1.id = t2.id WHERE t1.x = 1",
+		"DELETE FROM t WHERE a = 1 RETURNING a",
+		"DELETE QUICK FROM t WHERE a = 1",
 	}
 	for _, sql := range cases {
 		t.Run(sql, func(t *testing.T) {
@@ -778,5 +805,106 @@ func TestTableOptionBool(t *testing.T) {
 			t.Fatalf("bool option value = %q", ct.Options[0].Value)
 		}
 		parseAll(t, got) // 格式化输出必须可再解析
+	}
+}
+
+func TestDDLCommonExtras(t *testing.T) {
+	t.Run("fk-reference-actions", func(t *testing.T) {
+		st := parseAll(t, "CREATE TABLE t (id INT, CONSTRAINT fk FOREIGN KEY (id) REFERENCES p (pid) ON DELETE CASCADE ON UPDATE RESTRICT)")
+		ct := st[0].(*ast.CreateTableStmt)
+		if len(ct.Constraints) != 1 {
+			t.Fatalf("constraints = %d", len(ct.Constraints))
+		}
+		c := ct.Constraints[0]
+		if c.Kind != "FOREIGN KEY" || c.RefTable == nil || len(c.RefTable.Parts) == 0 ||
+			len(c.RefColumns) != 1 || c.OnDelete != "CASCADE" || c.OnUpdate != "RESTRICT" {
+			t.Fatalf("fk not preserved: %+v", c)
+		}
+	})
+
+	t.Run("zerofill", func(t *testing.T) {
+		st := parseAll(t, "CREATE TABLE t (id INT UNSIGNED ZEROFILL)")
+		ct := st[0].(*ast.CreateTableStmt)
+		if !ct.Columns[0].Zerofill || !ct.Columns[0].Unsigned {
+			t.Fatalf("zerofill/unsigned not preserved: %+v", ct.Columns[0])
+		}
+	})
+
+	t.Run("maxvalue-no-paren", func(t *testing.T) {
+		st := parseAll(t, "CREATE TABLE t (id INT, PRIMARY KEY (id)) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (100), PARTITION p1 VALUES LESS THAN MAXVALUE)")
+		ct := st[0].(*ast.CreateTableStmt)
+		pds := ct.Partition.Partitions
+		if len(pds) != 2 || !pds[1].MaxValue || pds[1].ValueKind != "LESS THAN" {
+			t.Fatalf("maxvalue partition not preserved: %+v", pds)
+		}
+	})
+
+	t.Run("comment-table-option-quoted", func(t *testing.T) {
+		st := parseAll(t, "CREATE TABLE t (id INT) COMMENT = 'table comment'")
+		ct := st[0].(*ast.CreateTableStmt)
+		if len(ct.Options) != 1 || ct.Options[0].Name != "comment" {
+			t.Fatalf("option missing: %+v", ct.Options)
+		}
+		if got := formatter.Format(st[0]); got != "CREATE TABLE t ( id INT) COMMENT='table comment'" {
+			t.Fatalf("comment option not quoted: %s", got)
+		}
+	})
+}
+
+func TestAlterTableExtras(t *testing.T) {
+	cases := []struct {
+		src  string
+		kind ast.AlterActionKind
+	}{
+		{"ALTER TABLE t ADD COLUMN (c1 INT, c2 VARCHAR(10))", ast.AlterAddColumns},
+		{"ALTER TABLE t ADD INDEX idx (a) LOCAL", ast.AlterAddIndex},
+		{"ALTER TABLE t ALTER INDEX idx INVISIBLE", ast.AlterInvisibleIndex},
+		{"ALTER TABLE t ALTER INDEX idx VISIBLE", ast.AlterVisibleIndex},
+		{"ALTER TABLE t ENABLE KEYS", ast.AlterEnableKeys},
+		{"ALTER TABLE t DISABLE KEYS", ast.AlterDisableKeys},
+	}
+	for _, tc := range cases {
+		st := parseAll(t, tc.src)
+		at := st[0].(*ast.AlterTableStmt)
+		if len(at.Actions) != 1 || at.Actions[0].Kind != tc.kind {
+			t.Fatalf("%s: kind = %q, want %q", tc.src, at.Actions[0].Kind, tc.kind)
+		}
+	}
+	if st := parseAll(t, "ALTER TABLE t ADD INDEX idx (a) LOCAL"); st[0].(*ast.AlterTableStmt).Actions[0].IndexOptions[0] != "LOCAL" {
+		t.Fatal("index option LOCAL not preserved")
+	}
+}
+
+func TestUpdateDeleteExtras(t *testing.T) {
+	// UPDATE LOW_PRIORITY + RETURNING
+	st := parseAll(t, "UPDATE LOW_PRIORITY t SET a = 1 WHERE id = 2 RETURNING id, a")
+	up := st[0].(*ast.UpdateStmt)
+	if !up.LowPriority || len(up.Returning) != 2 {
+		t.Fatalf("update extras: %+v", up)
+	}
+	if got := formatter.Format(st[0]); got != "UPDATE LOW_PRIORITY t SET a = 1 WHERE id = 2 RETURNING id, a" {
+		t.Fatalf("update format: %s", got)
+	}
+
+	// 多表删除（表列表形式）+ RETURNING
+	st = parseAll(t, "DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t2.x = 1")
+	del := st[0].(*ast.DeleteStmt)
+	if len(del.Tables) != 1 || len(del.From) != 1 {
+		t.Fatalf("delete list form: %+v", del)
+	}
+	if got := formatter.Format(st[0]); got != "DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t2.x = 1" {
+		t.Fatalf("delete format: %s", got)
+	}
+
+	// DELETE RETURNING
+	st = parseAll(t, "DELETE FROM t WHERE a = 1 RETURNING a")
+	if len(st[0].(*ast.DeleteStmt).Returning) != 1 {
+		t.Fatal("delete returning not preserved")
+	}
+
+	// DELETE mods
+	st = parseAll(t, "DELETE QUICK FROM t WHERE a = 1")
+	if st[0].(*ast.DeleteStmt).Mods != "QUICK" {
+		t.Fatal("delete mod not preserved")
 	}
 }

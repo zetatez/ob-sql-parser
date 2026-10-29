@@ -6,6 +6,7 @@ type ColumnDef struct {
 	Type            string
 	TypeParams      []Expression
 	Unsigned        bool
+	Zerofill        bool
 	Nullable        Nullable
 	Default         Expression
 	OnUpdate        Expression // ON UPDATE CURRENT_TIMESTAMP[(n)] / NOW() / ...
@@ -39,11 +40,15 @@ func (n Nullable) String() string {
 
 // ConstraintDef is a table-level constraint.
 type ConstraintDef struct {
-	Name      string
-	Kind      string        // "PRIMARY KEY","UNIQUE","KEY","INDEX","FOREIGN KEY","CHECK"
-	Columns   []*Identifier // index/pr key columns (as names)
-	Check     Expression    // CHECK (expr)
-	IndexType string
+	Name       string
+	Kind       string        // "PRIMARY KEY","UNIQUE","KEY","INDEX","FOREIGN KEY","CHECK"
+	Columns    []*Identifier // index/pr key columns (as names)
+	Check      Expression    // CHECK (expr)
+	IndexType  string
+	RefTable   *Identifier   // FOREIGN KEY ... REFERENCES table
+	RefColumns []*Identifier // REFERENCES table (cols)
+	OnDelete   string        // ON DELETE RESTRICT|CASCADE|SET NULL|NO ACTION|SET DEFAULT
+	OnUpdate   string        // ON UPDATE ...
 }
 
 // TableOption is a generic CREATE TABLE option (ENGINE=.., COMMENT=.., ...).
@@ -99,6 +104,7 @@ type PartitionDef struct {
 	Name      string
 	ValueKind string // "LESS THAN" or "IN"
 	Values    []Expression
+	MaxValue  bool // VALUES LESS THAN MAXVALUE (无括号)
 	Options   []TableOption
 }
 
@@ -363,6 +369,10 @@ const (
 	AlterAddColumns     AlterActionKind = "ADD COLUMNS"
 	AlterConvertCharset AlterActionKind = "CONVERT TO CHARACTER SET"
 	AlterAutoIncrement  AlterActionKind = "AUTO_INCREMENT"
+	AlterVisibleIndex   AlterActionKind = "ALTER INDEX VISIBLE"
+	AlterInvisibleIndex AlterActionKind = "ALTER INDEX INVISIBLE"
+	AlterEnableKeys     AlterActionKind = "ENABLE KEYS"
+	AlterDisableKeys    AlterActionKind = "DISABLE KEYS"
 )
 
 // AlterAction is one comma-separated action in an ALTER TABLE statement.
@@ -379,11 +389,13 @@ type AlterAction struct {
 	Default    Expression
 
 	// column position / convert charset
-	Position   string // "","FIRST","AFTER"
-	RefCol     string
-	ColumnDefs []*ColumnDef
-	Charset    string
-	Collate    string
+	Position     string // "","FIRST","AFTER"
+	RefCol       string
+	ColumnDefs   []*ColumnDef
+	Charset      string
+	Collate      string
+	IndexOptions []string // ADD INDEX ... LOCAL/GLOBAL/COMMENT '..'/KEY_BLOCK_SIZE=n
+	Visible      bool     // ALTER INDEX ... VISIBLE/INVISIBLE
 
 	// partition operations
 	PartitionDefs []PartitionDef

@@ -27,6 +27,7 @@ type colAttrs struct {
 	charset       string
 	collate       string
 	unsigned      bool
+	zerofill      bool
 	invisible     bool
 	generated     ast.Expression
 	genStored     bool
@@ -294,8 +295,23 @@ func asSubSpec(v interface{}) subSpec {
 
 // partitionValues is a parsed PARTITION VALUES clause.
 type partitionValues struct {
-	kind   string
-	values []ast.Expression
+	kind     string
+	values   []ast.Expression
+	maxValue bool // VALUES LESS THAN MAXVALUE（无括号）
+}
+
+// fkRef 是 FOREIGN KEY ... REFERENCES 的完整指。
+type fkRef struct {
+	table    *ast.Identifier
+	cols     []*ast.Identifier
+	onDelete string
+	onUpdate string
+}
+
+// refActions 是 ON DELETE / ON UPDATE 引用动作。
+type refActions struct {
+	onDelete string
+	onUpdate string
 }
 
 // dbOpts accumulates CREATE DATABASE options.
@@ -407,6 +423,14 @@ func asIdent(v interface{}) *ast.Identifier {
 func asIdentName(v interface{}) string {
 	if i := asIdent(v); i != nil && len(i.Parts) > 0 {
 		return i.Parts[len(i.Parts)-1]
+	}
+	return ""
+}
+
+// litText 返回字面量的源文本（带引号），保证格式化后可再解析。
+func litText(v interface{}) string {
+	if l, ok := v.(*ast.Literal); ok {
+		return l.Text
 	}
 	return ""
 }
@@ -533,6 +557,7 @@ func buildColumnDef(name interface{}, dt interface{}, attrs interface{}) *ast.Co
 		cd.Charset = a.charset
 		cd.Collate = a.collate
 		cd.Unsigned = cd.Unsigned || a.unsigned
+		cd.Zerofill = a.zerofill
 		cd.Invisible = a.invisible
 		if a.hasGenerated {
 			cd.Generated = a.generated
@@ -760,6 +785,9 @@ func mergeAttrs(a, b *colAttrs) *colAttrs {
 	}
 	if b.unsigned {
 		a.unsigned = true
+	}
+	if b.zerofill {
+		a.zerofill = true
 	}
 	if b.invisible {
 		a.invisible = true

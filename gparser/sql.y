@@ -29,6 +29,7 @@ import (
 %token <node> GLOBAL SESSION LOCAL DATABASES SCHEMAS TABLES VARIABLES STATUS WARNINGS ERRORS GRANTS PROCESSLIST
 %token ENGINES STORAGE COLLATION COLUMNS FIELDS INDEXES KEYS VIEW TRIGGERS PROCEDURE FUNCTION NAMES
 %token CHARACTER EXTENDED PRETTY FORMAT CASCADE RESTRICT UNSIGNED DEFAULT COMMENT AUTO_INCREMENT CHARSET COLLATE INVISIBLE BINARY CAST
+%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE
 %token COMP_EQ COMP_NE COMP_LT COMP_GT COMP_LE COMP_GE NSEQ SHIFT_LEFT SHIFT_RIGHT ESCAPE ILLEGAL_TOK
 %token DIV MOD SOUNDS
 %token ALTER ADD MODIFY CHANGE RENAME COLUMN TO FORCE ROLLUP
@@ -98,6 +99,9 @@ import (
 %type <node> opt_partition partition_by opt_partitions_count opt_partition_defs partition_def_list partition_def
 %type <node> opt_subpartition opt_subpartitions_count
 %type <node> opt_auto_partition
+%type <node> ref_action opt_returning delete_table_list
+%type <node> opt_low_priority opt_index_option_list alter_index_option
+%type <node> opt_fk_reference opt_pk_name_list opt_fk_ref_actions opt_fk_ref_action_update opt_fk_ref_action_delete
 %type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list
 %type <node> show_stmt full_opt show_body show_scope_opt show_from_opt like_opt
 %type <node> set_stmt set_body set_item_list set_item set_lhs opt_scope names_arg
@@ -1604,13 +1608,24 @@ returning_opt:
 /* ---------------- UPDATE / DELETE ---------------- */
 
 update_stmt:
-	UPDATE ignore_opt table_ref_list SET assignment_list where_opt opt_order opt_limit
+	UPDATE opt_low_priority ignore_opt table_ref_list SET assignment_list where_opt opt_order opt_limit opt_returning
 	{
-		up := &ast.UpdateStmt{Ignore: asBool($2), Tables: asTableRefList($3), Set: asAssignList($5)}
-		up.Where = asExpr($6)
-		up.OrderBy = asOrderList($7)
-		up.Limit = asLimit($8)
+		up := &ast.UpdateStmt{Ignore: asBool($3), LowPriority: asBool($2), Tables: asTableRefList($4), Set: asAssignList($6)}
+		up.Where = asExpr($7)
+		up.OrderBy = asOrderList($8)
+		up.Limit = asLimit($9)
+		up.Returning = asIdentList($10)
 		$$ = up
+	}
+
+opt_low_priority:
+	/*empty*/
+	{
+		$$ = false
+	}
+	| LOW_PRIORITY
+	{
+		$$ = true
 	}
 
 table_ref_list:
@@ -1624,32 +1639,63 @@ table_ref_list:
 	}
 
 delete_stmt:
-	DELETE delete_mods FROM table_ref_list using_opt where_opt opt_order opt_limit
+	DELETE delete_mods FROM table_ref_list using_opt where_opt opt_order opt_limit opt_returning
 	{
-		d := &ast.DeleteStmt{From: asTableRefList($4)}
+		d := &ast.DeleteStmt{Mods: asStr($2), From: asTableRefList($4)}
 		d.Using = asTableRefList($5)
 		d.Where = asExpr($6)
 		d.OrderBy = asOrderList($7)
 		d.Limit = asLimit($8)
+		d.Returning = asIdentList($9)
 		$$ = d
+	}
+	| DELETE delete_mods delete_table_list FROM table_ref_list using_opt where_opt opt_order opt_limit opt_returning
+	{
+		d := &ast.DeleteStmt{Mods: asStr($2), Tables: asIdentList($3), From: asTableRefList($5)}
+		d.Using = asTableRefList($6)
+		d.Where = asExpr($7)
+		d.OrderBy = asOrderList($8)
+		d.Limit = asLimit($9)
+		d.Returning = asIdentList($10)
+		$$ = d
+	}
+
+opt_returning:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| RETURNING ident_list
+	{
+		$$ = asIdentList($2)
+	}
+
+delete_table_list:
+	NAME_OB
+	{
+		$$ = []*ast.Identifier{asIdent($1)}
+	}
+	| delete_table_list ',' NAME_OB
+	{
+		$$ = append(asIdentList($1), asIdent($3))
 	}
 
 delete_mods:
 	/*empty*/
 	{
-		$$ = nil
+		$$ = ""
 	}
 	| LOW_PRIORITY
 	{
-		$$ = nil
+		$$ = "LOW_PRIORITY"
 	}
 	| QUICK
 	{
-		$$ = nil
+		$$ = "QUICK"
 	}
 	| IGNORE
 	{
-		$$ = nil
+		$$ = "IGNORE"
 	}
 
 using_opt:
@@ -2322,7 +2368,7 @@ partition_def:
 	PARTITION NAME_OB opt_partition_values table_options_opt
 	{
 		pv := asPartitionValues($3)
-		$$ = ast.PartitionDef{Name: asIdentName($2), ValueKind: pv.kind, Values: pv.values, Options: asTableOptions($4)}
+		$$ = ast.PartitionDef{Name: asIdentName($2), ValueKind: pv.kind, Values: pv.values, MaxValue: pv.maxValue, Options: asTableOptions($4)}
 	}
 
 opt_partition_values:
@@ -2333,6 +2379,10 @@ opt_partition_values:
 	| VALUES LESS THAN '(' part_value_list ')'
 	{
 		$$ = partitionValues{kind: "LESS THAN", values: asExprList($5)}
+	}
+	| VALUES LESS THAN MAXVALUE
+	{
+		$$ = partitionValues{kind: "LESS THAN", maxValue: true}
 	}
 	| VALUES IN '(' expr_list ')'
 	{
@@ -2463,6 +2513,10 @@ column_attr:
 	{
 		$$ = &colAttrs{invisible: true}
 	}
+	| ZEROFILL
+	{
+		$$ = &colAttrs{zerofill: true}
+	}
 	| PRIMARY KEY
 	{
 		$$ = &colAttrs{}
@@ -2528,21 +2582,98 @@ constraint_body:
 	{
 		$$ = &ast.ConstraintDef{Kind: "INDEX", Columns: asIdentList($3)}
 	}
-	| FOREIGN KEY '(' ident_list ')'
+	| FOREIGN KEY '(' ident_list ')' opt_fk_reference
 	{
-		$$ = &ast.ConstraintDef{Kind: "FOREIGN KEY", Columns: asIdentList($4)}
-	}
-	| FOREIGN KEY '(' ident_list ')' REFERENCES table_name
-	{
-		$$ = &ast.ConstraintDef{Kind: "FOREIGN KEY", Columns: asIdentList($4)}
-	}
-	| FOREIGN KEY '(' ident_list ')' REFERENCES table_name '(' ident_list ')'
-	{
-		$$ = &ast.ConstraintDef{Kind: "FOREIGN KEY", Columns: asIdentList($4)}
+		cd := &ast.ConstraintDef{Kind: "FOREIGN KEY", Columns: asIdentList($4)}
+		fr := $6.(fkRef)
+		cd.RefTable = fr.table
+		cd.RefColumns = fr.cols
+		cd.OnDelete = fr.onDelete
+		cd.OnUpdate = fr.onUpdate
+		$$ = cd
 	}
 	| CHECK '(' expr ')'
 	{
 		$$ = &ast.ConstraintDef{Kind: "CHECK", Check: asExpr($3)}
+	}
+
+opt_fk_reference:
+	/*empty*/
+	{
+		$$ = fkRef{}
+	}
+	| REFERENCES table_name opt_pk_name_list opt_fk_ref_actions
+	{
+		ra := $4.(*refActions)
+		$$ = fkRef{table: asIdent($2), cols: asIdentList($3), onDelete: ra.onDelete, onUpdate: ra.onUpdate}
+	}
+
+opt_pk_name_list:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| '(' ident_list ')'
+	{
+		$$ = asIdentList($2)
+	}
+
+opt_fk_ref_actions:
+	/*empty*/
+	{
+		$$ = &refActions{}
+	}
+	| ON DELETE ref_action opt_fk_ref_action_update
+	{
+		a := $4.(*refActions)
+		$$ = &refActions{onDelete: asStr($3), onUpdate: a.onUpdate}
+	}
+	| ON UPDATE ref_action opt_fk_ref_action_delete
+	{
+		a := $4.(*refActions)
+		$$ = &refActions{onDelete: a.onDelete, onUpdate: asStr($3)}
+	}
+
+opt_fk_ref_action_update:
+	/*empty*/
+	{
+		$$ = &refActions{}
+	}
+	| ON UPDATE ref_action
+	{
+		$$ = &refActions{onUpdate: asStr($3)}
+	}
+
+opt_fk_ref_action_delete:
+	/*empty*/
+	{
+		$$ = &refActions{}
+	}
+	| ON DELETE ref_action
+	{
+		$$ = &refActions{onDelete: asStr($3)}
+	}
+
+ref_action:
+	RESTRICT
+	{
+		$$ = "RESTRICT"
+	}
+	| CASCADE
+	{
+		$$ = "CASCADE"
+	}
+	| SET NULLX
+	{
+		$$ = "SET NULL"
+	}
+	| SET DEFAULT
+	{
+		$$ = "SET DEFAULT"
+	}
+	| NO ACTION
+	{
+		$$ = "NO ACTION"
 	}
 
 table_options_opt:
@@ -2604,6 +2735,10 @@ table_option:
 	{
 		$$ = ast.TableOption{Name: "tablegroup", Value: asStr($2)}
 	}
+	| BLOCK_SIZE COMP_EQ table_option_value
+	{
+		$$ = ast.TableOption{Name: "block_size", Value: asStr($3)}
+	}
 
 table_option_value:
 	NAME_OB
@@ -2612,7 +2747,7 @@ table_option_value:
 	}
 	| STRING_VALUE
 	{
-		$$ = asLitValue($1)
+		$$ = litText($1)
 	}
 	| INTNUM
 	{
@@ -3967,29 +4102,29 @@ alter_action:
 		a.RefCol = cp.ref
 		$$ = a
 	}
-	| ADD '(' column_def_list ')'
+	| ADD opt_column '(' column_def_list ')'
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddColumns, ColumnDefs: asColumnDefs($3)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddColumns, ColumnDefs: asColumnDefs($4)}
 	}
 	| ADD PARTITION '(' partition_def_list ')'
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddPartition, PartitionDefs: asPartitionDefs($4)}
 	}
-	| ADD INDEX NAME_OB '(' ident_list ')'
+	| ADD INDEX NAME_OB '(' ident_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5), IndexOptions: asStringList($7)}
 	}
-	| ADD KEY NAME_OB '(' ident_list ')'
+	| ADD KEY NAME_OB '(' ident_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), Columns: asIdentList($5), IndexOptions: asStringList($7)}
 	}
-	| ADD UNIQUE INDEX NAME_OB '(' ident_list ')'
+	| ADD UNIQUE INDEX NAME_OB '(' ident_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6), IndexOptions: asStringList($8)}
 	}
-	| ADD UNIQUE KEY NAME_OB '(' ident_list ')'
+	| ADD UNIQUE KEY NAME_OB '(' ident_list ')' opt_index_option_list
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), Columns: asIdentList($6), IndexOptions: asStringList($8)}
 	}
 	| ADD CONSTRAINT NAME_OB constraint_body
 	{
@@ -4087,6 +4222,58 @@ alter_action:
 	| ALTER opt_column NAME_OB DROP DEFAULT
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterDropDefault, Name: asIdentName($3)}
+	}
+	| ALTER INDEX NAME_OB INVISIBLE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterInvisibleIndex, Name: asIdentName($3)}
+	}
+	| ALTER INDEX NAME_OB VISIBLE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterVisibleIndex, Name: asIdentName($3)}
+	}
+	| ENABLE KEYS
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterEnableKeys}
+	}
+	| DISABLE KEYS
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterDisableKeys}
+	}
+
+opt_index_option_list:
+	/*empty*/
+	{
+		$$ = nil
+	}
+	| opt_index_option_list alter_index_option
+	{
+		$$ = append(asStringList($1), asStr($2))
+	}
+
+alter_index_option:
+	GLOBAL
+	{
+		$$ = "GLOBAL"
+	}
+	| LOCAL
+	{
+		$$ = "LOCAL"
+	}
+	| KEY_BLOCK_SIZE opt_equal INTNUM
+	{
+		$$ = "KEY_BLOCK_SIZE=" + asLitValue($3)
+	}
+	| BLOCK_SIZE opt_equal INTNUM
+	{
+		$$ = "BLOCK_SIZE=" + asLitValue($3)
+	}
+	| COMMENT STRING_VALUE
+	{
+		$$ = "COMMENT " + litText($2)
+	}
+	| USING NAME_OB
+	{
+		$$ = "USING " + asIdentName($2)
 	}
 
 column_def_list:
