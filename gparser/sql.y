@@ -29,7 +29,7 @@ import (
 %token <node> GLOBAL SESSION LOCAL DATABASES SCHEMAS TABLES VARIABLES STATUS WARNINGS ERRORS GRANTS PROCESSLIST
 %token ENGINES STORAGE COLLATION COLUMNS FIELDS INDEXES KEYS VIEW TRIGGERS PROCEDURE FUNCTION NAMES
 %token CHARACTER EXTENDED PRETTY FORMAT CASCADE RESTRICT UNSIGNED DEFAULT COMMENT AUTO_INCREMENT CHARSET COLLATE INVISIBLE BINARY CAST
-%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE ACCOUNT RANDOM
+%token KEY_BLOCK_SIZE BLOCK_SIZE ACTION NOACTION NO ENABLE DISABLE ZEROFILL VISIBLE ACCOUNT RANDOM EACH
 %token COMP_EQ COMP_NE COMP_LT COMP_GT COMP_LE COMP_GE NSEQ SHIFT_LEFT SHIFT_RIGHT ESCAPE ILLEGAL_TOK
 %token DIV MOD SOUNDS
 %token ALTER ADD MODIFY CHANGE RENAME COLUMN TO FORCE ROLLUP
@@ -100,9 +100,9 @@ import (
 %type <node> opt_subpartition opt_subpartitions_count
 %type <node> opt_auto_partition
 %type <node> ref_action opt_returning delete_table_list returning_list returning_col
-%type <node> opt_low_priority opt_index_option_list alter_index_option
+%type <node> opt_low_priority opt_index_option_list alter_index_option opt_with_column_group column_group_elements column_group_element
 %type <node> opt_fk_reference opt_pk_name_list opt_fk_ref_actions opt_fk_ref_action_update opt_fk_ref_action_delete
-%type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col
+%type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col fk_col_list fk_col
 %type <node> opt_alter_user_suffix opt_by_pwd opt_account_action
 %type <node> opt_insert_mods
 %type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list
@@ -1779,9 +1779,9 @@ create_stmt:
 			$$ = &ast.CreateTableStmt{Temp: true, IfNotExists: asBool($4), Table: asIdent($5), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, Select: body.sel}
 		}
 	}
-	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_index_option_list opt_partition
+	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_index_option_list opt_partition opt_with_column_group
 	{
-		$$ = &ast.CreateIndexStmt{Unique: asBool($2), IfNotExists: asBool($4), Name: asIdent($5), Method: asStr($6), Table: asIdent($8), Columns: asIndexCols($10), Options: asStringList($12), Partition: asPartitionSpec($13)}
+		$$ = &ast.CreateIndexStmt{Unique: asBool($2), IfNotExists: asBool($4), Name: asIdent($5), Method: asStr($6), Table: asIdent($8), Columns: asIndexCols($10), Options: asStringList($12), Partition: asPartitionSpec($13), ColumnGroup: asStr($14)}
 	}
 	| CREATE DATABASE opt_if_not_exists NAME_OB db_opts_opt
 	{
@@ -2561,22 +2561,6 @@ create_def_list:
 create_def:
 	column_def
 	| table_constraint
-	| KEY NAME_OB '(' ident_list ')'
-	{
-		$$ = &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), Columns: asIdentList($4)}
-	}
-	| INDEX NAME_OB '(' ident_list ')'
-	{
-		$$ = &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), Columns: asIdentList($4)}
-	}
-	| UNIQUE NAME_OB '(' ident_list ')'
-	{
-		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($2), Columns: asIdentList($4)}
-	}
-	| UNIQUE KEY NAME_OB '(' ident_list ')'
-	{
-		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), Columns: asIdentList($5)}
-	}
 
 column_def:
 	NAME_OB data_type column_attrs_opt
@@ -2697,31 +2681,35 @@ constraint_body:
 	{
 		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Columns: asIdentList($3)}
 	}
-	| KEY '(' cst_col_list ')'
+	| UNIQUE NAME_OB '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "KEY", IndexCols: asIndexCols($3)}
+		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($2), IndexCols: asIndexCols($4), Options: asStringList($6), ColumnGroup: asStr($7)}
 	}
-	| KEY NAME_OB '(' cst_col_list ')'
+	| KEY '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), IndexCols: asIndexCols($4)}
+		$$ = &ast.ConstraintDef{Kind: "KEY", IndexCols: asIndexCols($3), Options: asStringList($5), ColumnGroup: asStr($6)}
 	}
-	| INDEX '(' cst_col_list ')'
+	| KEY NAME_OB '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "INDEX", IndexCols: asIndexCols($3)}
+		$$ = &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), IndexCols: asIndexCols($4), Options: asStringList($6), ColumnGroup: asStr($7)}
 	}
-	| INDEX NAME_OB '(' cst_col_list ')'
+	| INDEX '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), IndexCols: asIndexCols($4)}
+		$$ = &ast.ConstraintDef{Kind: "INDEX", IndexCols: asIndexCols($3), Options: asStringList($5), ColumnGroup: asStr($6)}
 	}
-	| UNIQUE KEY '(' cst_col_list ')'
+	| INDEX NAME_OB '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "UNIQUE", IndexCols: asIndexCols($4)}
+		$$ = &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), IndexCols: asIndexCols($4), Options: asStringList($6), ColumnGroup: asStr($7)}
 	}
-	| UNIQUE KEY NAME_OB '(' cst_col_list ')'
+	| UNIQUE KEY '(' cst_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), IndexCols: asIndexCols($5)}
+		$$ = &ast.ConstraintDef{Kind: "UNIQUE", IndexCols: asIndexCols($4), Options: asStringList($6), ColumnGroup: asStr($7)}
 	}
-	| FOREIGN KEY '(' ident_list ')' opt_fk_reference
+	| UNIQUE KEY NAME_OB '(' cst_col_list ')' opt_index_option_list opt_with_column_group
+	{
+		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), IndexCols: asIndexCols($5), Options: asStringList($7), ColumnGroup: asStr($8)}
+	}
+	| FOREIGN KEY '(' fk_col_list ')' opt_fk_reference
 	{
 		cd := &ast.ConstraintDef{Kind: "FOREIGN KEY", Columns: asIdentList($4)}
 		fr := $6.(fkRef)
@@ -2752,7 +2740,7 @@ opt_pk_name_list:
 	{
 		$$ = nil
 	}
-	| '(' ident_list ')'
+	| '(' fk_col_list ')'
 	{
 		$$ = asIdentList($2)
 	}
@@ -2963,6 +2951,22 @@ opt_col_length:
 	| '(' expr ')'
 	{
 		$$ = asExpr($2)
+	}
+
+fk_col_list:
+	fk_col
+	{
+		$$ = []*ast.Identifier{asIdent($1)}
+	}
+	| fk_col_list ',' fk_col
+	{
+		$$ = append(asIdentList($1), asIdent($3))
+	}
+
+fk_col:
+	NAME_OB
+	{
+		$$ = $1
 	}
 
 pk_col_list:
@@ -3437,7 +3441,7 @@ mlog_opt:
 	{
 		$$ = mlogOpts{withPrimary: true}
 	}
-	| INCLUDING NEW VALUES
+	| INCLUDING NAME_OB VALUES
 	{
 		$$ = mlogOpts{includingNew: true}
 	}
@@ -4325,21 +4329,21 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddPartition, PartitionDefs: asPartitionDefs($4)}
 	}
-	| ADD INDEX NAME_OB '(' index_col_list ')' opt_index_option_list
+	| ADD INDEX NAME_OB '(' index_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7), ColumnGroup: asStr($8)}
 	}
-	| ADD KEY NAME_OB '(' index_col_list ')' opt_index_option_list
+	| ADD KEY NAME_OB '(' index_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), IndexOptions: asStringList($7), ColumnGroup: asStr($8)}
 	}
-	| ADD UNIQUE INDEX NAME_OB '(' index_col_list ')' opt_index_option_list
+	| ADD UNIQUE INDEX NAME_OB '(' index_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8), ColumnGroup: asStr($9)}
 	}
-	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_index_option_list
+	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_index_option_list opt_with_column_group
 	{
-		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8)}
+		$$ = ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), IndexOptions: asStringList($8), ColumnGroup: asStr($9)}
 	}
 	| ADD CONSTRAINT NAME_OB constraint_body
 	{
@@ -4489,6 +4493,40 @@ alter_index_option:
 	| USING NAME_OB
 	{
 		$$ = "USING " + asIdentName($2)
+	}
+
+opt_with_column_group:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| WITH COLUMN GROUP '(' column_group_elements ')'
+	{
+		$$ = "WITH COLUMN GROUP (" + asStr($5) + ")"
+	}
+
+column_group_elements:
+	column_group_element
+	{
+		$$ = $1
+	}
+	| column_group_elements ',' column_group_element
+	{
+		$$ = asStr($1) + ", " + asStr($3)
+	}
+
+column_group_element:
+	ALL COLUMNS
+	{
+		$$ = "ALL COLUMNS"
+	}
+	| EACH COLUMN
+	{
+		$$ = "EACH COLUMN"
+	}
+	| NAME_OB '(' ident_list ')'
+	{
+		$$ = asIdentName($1) + " (" + identsJoin(asIdentList($3)) + ")"
 	}
 
 column_def_list:

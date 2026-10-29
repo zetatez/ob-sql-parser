@@ -48,16 +48,18 @@ func (n Nullable) String() string {
 
 // ConstraintDef is a table-level constraint.
 type ConstraintDef struct {
-	Name       string
-	Kind       string        // "PRIMARY KEY","UNIQUE","KEY","INDEX","FOREIGN KEY","CHECK"
-	Columns    []*Identifier // index/pr key columns (as names)
-	IndexCols  []IndexCol    // KEY/INDEX/UNIQUE 带顺序/长度的列
-	Check      Expression    // CHECK (expr)
-	IndexType  string
-	RefTable   *Identifier   // FOREIGN KEY ... REFERENCES table
-	RefColumns []*Identifier // REFERENCES table (cols)
-	OnDelete   string        // ON DELETE RESTRICT|CASCADE|SET NULL|NO ACTION|SET DEFAULT
-	OnUpdate   string        // ON UPDATE ...
+	Name        string
+	Kind        string        // "PRIMARY KEY","UNIQUE","KEY","INDEX","FOREIGN KEY","CHECK"
+	Columns     []*Identifier // index/pr key columns (as names)
+	IndexCols   []IndexCol    // KEY/INDEX/UNIQUE 带顺序/长度的列
+	Options     []string      // KEY/INDEX/UNIQUE 索引选项 (LOCAL/GLOBAL/KEY_BLOCK_SIZE/COMMENT)
+	ColumnGroup string        // KEY/INDEX/UNIQUE ... WITH COLUMN GROUP (...)
+	Check       Expression    // CHECK (expr)
+	IndexType   string
+	RefTable    *Identifier   // FOREIGN KEY ... REFERENCES table
+	RefColumns  []*Identifier // REFERENCES table (cols)
+	OnDelete    string        // ON DELETE RESTRICT|CASCADE|SET NULL|NO ACTION|SET DEFAULT
+	OnUpdate    string        // ON UPDATE ...
 }
 
 // TableOption is a generic CREATE TABLE option (ENGINE=.., COMMENT=.., ...).
@@ -338,6 +340,7 @@ type CreateIndexStmt struct {
 	Method      string   // USING BTREE/HASH
 	Options     []string // GLOBAL/LOCAL/KEY_BLOCK_SIZE/COMMENT/...
 	Partition   *PartitionSpec
+	ColumnGroup string // WITH COLUMN GROUP (...)
 }
 
 // IndexCol 是索引列：可带前缀长度与排序方向。
@@ -419,6 +422,7 @@ type AlterAction struct {
 	IndexOptions []string // ADD INDEX ... LOCAL/GLOBAL/COMMENT '..'/KEY_BLOCK_SIZE=n
 	Visible      bool     // ALTER INDEX ... VISIBLE/INVISIBLE
 	IndexCols    []IndexCol
+	ColumnGroup  string // ADD INDEX ... WITH COLUMN GROUP (...)
 
 	// partition operations
 	PartitionDefs []PartitionDef

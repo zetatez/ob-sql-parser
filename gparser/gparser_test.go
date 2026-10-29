@@ -875,6 +875,39 @@ func TestAlterTableExtras(t *testing.T) {
 	}
 }
 
+func TestIndexOptionsAndColumnGroup(t *testing.T) {
+	// CREATE TABLE 约束级索引选项 + WITH COLUMN GROUP
+	st := parseAll(t, "CREATE TABLE t (a INT, KEY k (a) LOCAL BLOCK_SIZE = 16384 WITH COLUMN GROUP (ALL COLUMNS))")
+	ct := st[0].(*ast.CreateTableStmt)
+	if len(ct.Constraints) != 1 || len(ct.Constraints[0].Options) != 2 || ct.Constraints[0].ColumnGroup == "" {
+		t.Fatalf("constraint options: %+v", ct.Constraints[0])
+	}
+	// 命名 UNIQUE / UNIQUE KEY / INDEX 组合
+	st = parseAll(t, "CREATE TABLE t (a INT, UNIQUE uq (a), UNIQUE KEY uk (b) LOCAL, INDEX i (c) WITH COLUMN GROUP (cg (c)))")
+	if len(st[0].(*ast.CreateTableStmt).Constraints) != 3 {
+		t.Fatal("constraint kinds")
+	}
+	// CREATE INDEX / ALTER ADD INDEX 的 WITH COLUMN GROUP
+	st = parseAll(t, "CREATE INDEX idx ON t (a) LOCAL WITH COLUMN GROUP (EACH COLUMN)")
+	if st[0].(*ast.CreateIndexStmt).ColumnGroup == "" {
+		t.Fatal("create index colgroup lost")
+	}
+	st = parseAll(t, "ALTER TABLE t ADD INDEX idx (a) LOCAL WITH COLUMN GROUP (all columns)")
+	if st[0].(*ast.AlterTableStmt).Actions[0].ColumnGroup == "" {
+		t.Fatal("alter index colgroup lost")
+	}
+	// ALTER CHANGE COLUMN + ON UPDATE CURRENT_TIMESTAMP
+	st = parseAll(t, "ALTER TABLE t CHANGE COLUMN old new timestamp DEFAULT CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP()")
+	col := st[0].(*ast.AlterTableStmt).Actions[0].Column
+	if col == nil || col.OnUpdate == nil {
+		t.Fatal("change column on update lost")
+	}
+	// 索引选项 STRONG/WEAK 值
+	if st := parseAll(t, "CREATE TABLE t (id INT) read_consistency = STRONG"); st[0].(*ast.CreateTableStmt).Options[0].Value != "STRONG" {
+		t.Fatal("strong value lost")
+	}
+}
+
 func TestDDLDMLExtras3(t *testing.T) {
 	// CREATE INDEX 完整形态
 	st := parseAll(t, "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)")

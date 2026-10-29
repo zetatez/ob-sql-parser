@@ -797,6 +797,9 @@ func (f *formatter) stmt(s ast.Statement) {
 			f.raw(" ")
 			f.partitionSpec(v.Partition)
 		}
+		if v.ColumnGroup != "" {
+			f.printf(" %s", v.ColumnGroup)
+		}
 	case *ast.DropTableStmt:
 		f.printf("DROP TABLE ")
 		if v.IfExists {

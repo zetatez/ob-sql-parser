@@ -447,6 +447,24 @@ func asIdentName(v interface{}) string {
 	return ""
 }
 
+// identsJoin 把标识符列表拼成 "a, b"。
+func identsJoin(ids []*ast.Identifier) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != nil {
+			parts = append(parts, id.Parts[len(id.Parts)-1])
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func quoteSql(s string) string {
+	return "'" + s + "'"
+}
+
 // litText 返回字面量的源文本（带引号），保证格式化后可再解析。
 func litText(v interface{}) string {
 	if l, ok := v.(*ast.Literal); ok {

@@ -284,6 +284,12 @@ func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
 			sb.WriteString(" ON UPDATE " + c.OnUpdate)
 		}
 	}
+	for _, o := range c.Options {
+		sb.WriteString(" " + o)
+	}
+	if c.ColumnGroup != "" {
+		sb.WriteString(" " + c.ColumnGroup)
+	}
 	return sb.String()
 }
 func (f *formatter) alterTable(v *ast.AlterTableStmt) {
@@ -340,6 +346,9 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		}
 		for _, o := range a.IndexOptions {
 			f.printf(" %s", o)
+		}
+		if a.ColumnGroup != "" {
+			f.printf(" %s", a.ColumnGroup)
 		}
 	case ast.AlterDropIndex:
 		f.printf("DROP INDEX %s", f.quoteIfNeeded(a.Name))
