@@ -1012,6 +1012,45 @@ func TestCreateAlterDeepCheck(t *testing.T) {
 	}
 }
 
+func TestIndexTailFlexibleOrder(t *testing.T) {
+	// WITH (...) 与索引选项任意顺序
+	for _, s := range []string{
+		"CREATE INDEX idx ON t (a) LOCAL WITH (b=1)",
+		"CREATE INDEX idx ON t (a) WITH (b=1) LOCAL",
+		"CREATE INDEX idx ON t (a) STORING (b) LOCAL WITH (c=1)",
+		"CREATE UNIQUE INDEX idx ON t (a) WITH (x=1) BLOCK_SIZE 8192 WITH COLUMN GROUP (all columns)",
+		"ALTER TABLE t ADD INDEX idx (a) WITH (b=1) LOCAL",
+	} {
+		parseAll(t, s)
+	}
+	// 表级 PRIMARY KEY STORING(...)
+	st := parseAll(t, "CREATE TABLE t (a INT, b INT, PRIMARY KEY (a) STORING (b))")
+	pk := st[0].(*ast.CreateTableStmt).Constraints[0]
+	if len(pk.Storing) != 1 {
+		t.Fatalf("pk storing: %+v", pk)
+	}
+	st = parseAll(t, "CREATE TABLE t (a INT, b INT, PRIMARY KEY (a) LOCAL STORING (b))")
+	if len(st[0].(*ast.CreateTableStmt).Constraints[0].Storing) != 1 {
+		t.Fatal("pk storing after options")
+	}
+	// ALTER TABLE LOCK = NONE/DEFAULT
+	for _, v := range []string{"NONE", "DEFAULT", "SHARED"} {
+		st = parseAll(t, "ALTER TABLE t LOCK = "+v)
+		if st[0].(*ast.AlterTableStmt).Actions[0].Name != v {
+			t.Fatalf("lock %s: %+v", v, st[0].(*ast.AlterTableStmt).Actions[0])
+		}
+	}
+	// 表级 WITH COLUMN GROUP(...)
+	st = parseAll(t, "CREATE TABLE t (a INT) WITH COLUMN GROUP (all columns)")
+	if st[0].(*ast.CreateTableStmt).ColumnGroup == "" {
+		t.Fatal("table column group lost")
+	}
+	// 裸 CTAS 与 AS CTAS 共存
+	if st := parseAll(t, "CREATE TABLE t SELECT 1"); st[0].(*ast.CreateTableStmt).Select == nil {
+		t.Fatal("bare ctas")
+	}
+}
+
 func TestDDLDMLExtras3(t *testing.T) {
 	// CREATE INDEX 完整形态
 	st := parseAll(t, "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)")

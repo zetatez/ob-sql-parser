@@ -106,7 +106,7 @@ import (
 %type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col fk_col_list fk_col
 %type <node> opt_alter_user_suffix opt_by_pwd opt_account_action
 %type <node> opt_insert_mods
-%type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list opt_subpartition_defs subpartition_def_list
+%type <node> opt_partition_values part_value_list part_value opt_partition_clause name_list opt_subpartition_defs subpartition_def_list opt_table_colgroup
 %type <node> show_stmt full_opt show_body show_scope_opt show_from_opt like_opt
 %type <node> set_stmt set_body set_item_list set_item set_lhs opt_scope names_arg
 %type <node> use_stmt explain_stmt opt_explain_type begin_stmt commit_stmt rollback_stmt describe_stmt opt_work opt_start_read
@@ -1800,10 +1800,11 @@ create_stmt:
 			$$ = &ast.CreateTableStmt{Temp: true, IfNotExists: asBool($4), Table: asIdent($5), Columns: body.defs.cols, Constraints: body.defs.cons, Options: body.opts, Partition: body.part, ColumnGroup: body.colGroup, Select: body.sel}
 		}
 	}
-	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail opt_partition
+	| CREATE opt_unique INDEX opt_if_not_exists table_name opt_index_using ON table_name '(' index_col_list ')' opt_storing opt_index_tail opt_partition
 	{
-		ci := &ast.CreateIndexStmt{Unique: asBool($2), IfNotExists: asBool($4), Name: asIdent($5), Method: asStr($6), Table: asIdent($8), Columns: asIndexCols($10), Storing: asIdentList($12), Options: asStringList($13), Partition: asPartitionSpec($15)}
-		t := $14.(withTail)
+		ci := &ast.CreateIndexStmt{Unique: asBool($2), IfNotExists: asBool($4), Name: asIdent($5), Method: asStr($6), Table: asIdent($8), Columns: asIndexCols($10), Storing: asIdentList($12), Partition: asPartitionSpec($14)}
+		t := $13.(withTail)
+		ci.Options = t.options
 		ci.WithOpts = t.opts
 		ci.ColumnGroup = t.colgroup
 		$$ = ci
@@ -2358,17 +2359,31 @@ opt_unique:
 	}
 
 create_table_tail:
-	'(' create_def_list ')' table_options_opt opt_partition opt_as_select
+	'(' create_def_list ')' table_options_opt opt_partition opt_as_select opt_table_colgroup
 	{
-		$$ = tableBody{defs: asDefs($2), opts: asTableOptions($4), part: asPartition($5), sel: asSelect($6)}
+		$$ = tableBody{defs: asDefs($2), opts: asTableOptions($4), part: asPartition($5), sel: asSelect($6), colGroup: asStr($7)}
 	}
 	| LIKE table_name
 	{
 		$$ = tableBody{isLike: true, like: asIdent($2)}
 	}
-	| as_select
+	| AS select_stmt
+	{
+		$$ = tableBody{sel: asSelect($2)}
+	}
+	| select_stmt
 	{
 		$$ = tableBody{sel: asSelect($1)}
+	}
+
+opt_table_colgroup:
+	/*empty*/
+	{
+		$$ = ""
+	}
+	| WITH COLUMN GROUP '(' column_group_elements ')'
+	{
+		$$ = "WITH COLUMN GROUP (" + asStr($5) + ")"
 	}
 
 as_select:
@@ -2376,7 +2391,6 @@ as_select:
 	{
 		$$ = $2
 	}
-	| select_stmt
 
 opt_as_select:
 	/*empty*/
@@ -2387,7 +2401,6 @@ opt_as_select:
 	{
 		$$ = $2
 	}
-	| select_stmt
 
 opt_partition:
 	/*empty*/
@@ -2754,70 +2767,79 @@ table_constraint:
 	| constraint_body
 
 constraint_body:
-	PRIMARY KEY '(' pk_col_list ')' opt_index_option_list opt_index_tail
+	PRIMARY KEY '(' pk_col_list ')' opt_index_tail
 	{
-		cd := &ast.ConstraintDef{Kind: "PRIMARY KEY", Columns: asIdentList($4), Options: asStringList($6)}
-		t := $7.(withTail)
+		cd := &ast.ConstraintDef{Kind: "PRIMARY KEY", Columns: asIdentList($4)}
+		t := $6.(withTail)
+		cd.Options = t.options
 		cd.WithOpts = t.opts
 		cd.ColumnGroup = t.colgroup
+		cd.Storing = t.storing
 		$$ = cd
 	}
 	| UNIQUE '(' pk_col_list ')'
 	{
 		$$ = &ast.ConstraintDef{Kind: "UNIQUE", Columns: asIdentList($3)}
 	}
-	| UNIQUE NAME_OB '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| UNIQUE NAME_OB '(' cst_col_list ')' opt_storing opt_index_tail
 	{
-		cd := &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6), Options: asStringList($7)}
-		t := $8.(withTail)
-		cd.WithOpts = t.opts
-		cd.ColumnGroup = t.colgroup
-		$$ = cd
-	}
-	| KEY '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
-	{
-		cd := &ast.ConstraintDef{Kind: "KEY", IndexCols: asIndexCols($3), Storing: asIdentList($5), Options: asStringList($6)}
+		cd := &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6)}
 		t := $7.(withTail)
+		cd.Options = t.options
 		cd.WithOpts = t.opts
 		cd.ColumnGroup = t.colgroup
 		$$ = cd
 	}
-	| KEY NAME_OB '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| KEY '(' cst_col_list ')' opt_storing opt_index_tail
 	{
-		cd := &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6), Options: asStringList($7)}
-		t := $8.(withTail)
+		cd := &ast.ConstraintDef{Kind: "KEY", IndexCols: asIndexCols($3), Storing: asIdentList($5)}
+		t := $6.(withTail)
+		cd.Options = t.options
 		cd.WithOpts = t.opts
 		cd.ColumnGroup = t.colgroup
 		$$ = cd
 	}
-	| INDEX '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| KEY NAME_OB '(' cst_col_list ')' opt_storing opt_index_tail
 	{
-		cd := &ast.ConstraintDef{Kind: "INDEX", IndexCols: asIndexCols($3), Storing: asIdentList($5), Options: asStringList($6)}
+		cd := &ast.ConstraintDef{Kind: "KEY", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6)}
 		t := $7.(withTail)
+		cd.Options = t.options
 		cd.WithOpts = t.opts
 		cd.ColumnGroup = t.colgroup
 		$$ = cd
 	}
-	| INDEX NAME_OB '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| INDEX '(' cst_col_list ')' opt_storing opt_index_tail
 	{
-		cd := &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6), Options: asStringList($7)}
+		cd := &ast.ConstraintDef{Kind: "INDEX", IndexCols: asIndexCols($3), Storing: asIdentList($5)}
+		t := $6.(withTail)
+		cd.Options = t.options
+		cd.WithOpts = t.opts
+		cd.ColumnGroup = t.colgroup
+		$$ = cd
+	}
+	| INDEX NAME_OB '(' cst_col_list ')' opt_storing opt_index_tail
+	{
+		cd := &ast.ConstraintDef{Kind: "INDEX", Name: asIdentName($2), IndexCols: asIndexCols($4), Storing: asIdentList($6)}
+		t := $7.(withTail)
+		cd.Options = t.options
+		cd.WithOpts = t.opts
+		cd.ColumnGroup = t.colgroup
+		$$ = cd
+	}
+	| UNIQUE KEY '(' cst_col_list ')' opt_storing opt_index_tail
+	{
+		cd := &ast.ConstraintDef{Kind: "UNIQUE", IndexCols: asIndexCols($4), Storing: asIdentList($6)}
+		t := $7.(withTail)
+		cd.Options = t.options
+		cd.WithOpts = t.opts
+		cd.ColumnGroup = t.colgroup
+		$$ = cd
+	}
+	| UNIQUE KEY NAME_OB '(' cst_col_list ')' opt_storing opt_index_tail
+	{
+		cd := &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7)}
 		t := $8.(withTail)
-		cd.WithOpts = t.opts
-		cd.ColumnGroup = t.colgroup
-		$$ = cd
-	}
-	| UNIQUE KEY '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
-	{
-		cd := &ast.ConstraintDef{Kind: "UNIQUE", IndexCols: asIndexCols($4), Storing: asIdentList($6), Options: asStringList($7)}
-		t := $8.(withTail)
-		cd.WithOpts = t.opts
-		cd.ColumnGroup = t.colgroup
-		$$ = cd
-	}
-	| UNIQUE KEY NAME_OB '(' cst_col_list ')' opt_storing opt_index_option_list opt_index_tail
-	{
-		cd := &ast.ConstraintDef{Kind: "UNIQUE", Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7), Options: asStringList($8)}
-		t := $9.(withTail)
+		cd.Options = t.options
 		cd.WithOpts = t.opts
 		cd.ColumnGroup = t.colgroup
 		$$ = cd
@@ -4470,50 +4492,56 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAddPartition, PartitionDefs: asPartitionDefs($4)}
 	}
-	| ADD INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| ADD INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
 	{
-		a := ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7), IndexOptions: asStringList($8)}
+		a := ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7)}
+		t := $8.(withTail)
+		a.IndexOptions = t.options
+		a.WithOpts = t.opts
+		a.ColumnGroup = t.colgroup
+		$$ = a
+	}
+	| ADD KEY NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
+	{
+		a := ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7)}
+		t := $8.(withTail)
+		a.IndexOptions = t.options
+		a.WithOpts = t.opts
+		a.ColumnGroup = t.colgroup
+		$$ = a
+	}
+	| ADD UNIQUE INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
+	{
+		a := ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8)}
 		t := $9.(withTail)
+		a.IndexOptions = t.options
 		a.WithOpts = t.opts
 		a.ColumnGroup = t.colgroup
 		$$ = a
 	}
-	| ADD KEY NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| ADD FULLTEXT INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
 	{
-		a := ast.AlterAction{Kind: ast.AlterAddIndex, Name: asIdentName($3), IndexCols: asIndexCols($5), Storing: asIdentList($7), IndexOptions: asStringList($8)}
+		a := ast.AlterAction{Kind: ast.AlterAddFulltextIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8)}
 		t := $9.(withTail)
+		a.IndexOptions = t.options
 		a.WithOpts = t.opts
 		a.ColumnGroup = t.colgroup
 		$$ = a
 	}
-	| ADD UNIQUE INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| ADD SPATIAL INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
 	{
-		a := ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
-		t := $10.(withTail)
+		a := ast.AlterAction{Kind: ast.AlterAddSpatialIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8)}
+		t := $9.(withTail)
+		a.IndexOptions = t.options
 		a.WithOpts = t.opts
 		a.ColumnGroup = t.colgroup
 		$$ = a
 	}
-	| ADD FULLTEXT INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
+	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_storing opt_index_tail
 	{
-		a := ast.AlterAction{Kind: ast.AlterAddFulltextIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
-		t := $10.(withTail)
-		a.WithOpts = t.opts
-		a.ColumnGroup = t.colgroup
-		$$ = a
-	}
-	| ADD SPATIAL INDEX NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
-	{
-		a := ast.AlterAction{Kind: ast.AlterAddSpatialIndex, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
-		t := $10.(withTail)
-		a.WithOpts = t.opts
-		a.ColumnGroup = t.colgroup
-		$$ = a
-	}
-	| ADD UNIQUE KEY NAME_OB '(' index_col_list ')' opt_storing opt_index_option_list opt_index_tail
-	{
-		a := ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8), IndexOptions: asStringList($9)}
-		t := $10.(withTail)
+		a := ast.AlterAction{Kind: ast.AlterAddIndex, Unique: true, Name: asIdentName($4), IndexCols: asIndexCols($6), Storing: asIdentList($8)}
+		t := $9.(withTail)
+		a.IndexOptions = t.options
 		a.WithOpts = t.opts
 		a.ColumnGroup = t.colgroup
 		$$ = a
@@ -4683,6 +4711,14 @@ alter_action:
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterLock, Name: asIdentName($3)}
 	}
+	| LOCK COMP_EQ NONE
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterLock, Name: "NONE"}
+	}
+	| LOCK COMP_EQ DEFAULT
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterLock, Name: "DEFAULT"}
+	}
 	| TABLESPACE NAME_OB
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterAssignTablespace, Name: asIdentName($2)}
@@ -4747,13 +4783,29 @@ opt_index_tail:
 	{
 		$$ = withTail{}
 	}
-	| WITH '(' with_value_list ')'
+	| opt_index_tail alter_index_option
 	{
-		$$ = withTail{opts: asStringList($3)}
+		t := $1.(withTail)
+		t.options = append(t.options, asStr($2))
+		$$ = t
 	}
-	| WITH COLUMN GROUP '(' column_group_elements ')'
+	| opt_index_tail WITH '(' with_value_list ')'
 	{
-		$$ = withTail{colgroup: "WITH COLUMN GROUP (" + asStr($5) + ")"}
+		t := $1.(withTail)
+		t.opts = append(t.opts, asStringList($4)...)
+		$$ = t
+	}
+	| opt_index_tail WITH COLUMN GROUP '(' column_group_elements ')'
+	{
+		t := $1.(withTail)
+		t.colgroup = "WITH COLUMN GROUP (" + asStr($6) + ")"
+		$$ = t
+	}
+	| opt_index_tail STORING '(' ident_list ')'
+	{
+		t := $1.(withTail)
+		t.storing = append(t.storing, asIdentList($4)...)
+		$$ = t
 	}
 
 with_value_list:

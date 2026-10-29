@@ -453,10 +453,12 @@ func asIdentName(v interface{}) string {
 	return ""
 }
 
-// withTail 是索引后缀 WITH (...) / WITH COLUMN GROUP (...) 的合并载体。
+// withTail 是索引后缀（选项 / WITH (...) / WITH COLUMN GROUP (...)）的任意顺序载体。
 type withTail struct {
+	options  []string
 	opts     []string
 	colgroup string
+	storing  []*ast.Identifier
 }
 
 // identsJoin 把标识符列表拼成 "a, b"。
