@@ -1,0 +1,100 @@
+# OceanBase 结构设计解析器未支持语法
+
+本文记录结构设计链路当前无法由 `github.com/zetatez/ob-sql-parser` 完整解析的语法。
+记录目的：先明确边界和临时处理方式，后续在解析器/适配层实现，不靠“降级执行”绕过。
+
+## 当前处理原则
+
+- 用户提交的结构 SQL 无法完整解析时，预检查直接拒绝，不猜测、不裁剪、不降级执行。
+- 已有表的 `SHOW CREATE TABLE` 快照仅用于核对列/索引/分区边界，允许对**已知、无语义变化**的解析器差异做精确归一化后重试；原始 `CreateSQL` 仍完整保留，用于回滚定义。
+- 归一化只影响解析文本，不会改写实际执行 SQL。
+
+## 未支持清单
+
+### 1. `ON UPDATE CURRENT_TIMESTAMP`
+
+**示例**
+
+```sql
+CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+);
+```
+
+**当前错误**
+
+```text
+解析器未完整支持此语句，禁止降级执行：1:107: syntax error
+```
+
+`CURRENT_TIMESTAMP(n)`、`CURRENT_TIMESTAMP()` 同样触发。
+
+**影响**
+
+- 用户新建/修改表时使用标准审计字段写法会被预检查拒绝。
+- 已有表 `SHOW CREATE TABLE` 中包含该子句时，元数据快照解析会失败。
+- 已有表解析当前在 `parseExistingCreateTable` 中仅对该子句做解析前移除后重试；
+  原始 DDL 仍保留，因此回滚定义不会丢失该子句。
+
+**临时绕过**
+
+- 表单中省略 `ON UPDATE CURRENT_TIMESTAMP`，由应用层维护更新时间。
+- 或走人工维护流程，不通过结构设计自动执行。
+
+**后续实现**
+
+- 解析器为 `ColumnDef` 保留 `ON UPDATE` 表达式及精度。
+- formatter 能原样还原，结构比对纳入该属性。
+- 覆盖 `CURRENT_TIMESTAMP`、`CURRENT_TIMESTAMP()`、`CURRENT_TIMESTAMP(n)`。
+
+### 2. 布尔表选项 `USE_BLOOM_FILTER = TRUE/FALSE`
+
+**示例**
+
+```sql
+CREATE TABLE `t` (`id` bigint NOT NULL, PRIMARY KEY (`id`))
+  USE_BLOOM_FILTER = FALSE;
+```
+
+**当前错误**
+
+```text
+1:84: syntax error
+```
+
+解析器的表选项值接受字符串/数字/标识符，但当前未把 `TRUE`/`FALSE` 作为该位置的值。
+`USE_BLOOM_FILTER = 0/1` 可以解析。
+
+**影响**
+
+- 用户提交的建表/变更 SQL 含 `TRUE/FALSE` 表选项时会被拒绝。
+- OB 的 `SHOW CREATE TABLE` 若输出 `USE_BLOOM_FILTER = FALSE`，已有表快照解析会失败；
+  当前在 `parseExistingCreateTable` 中仅把该选项的 `TRUE/FALSE` 归一为 `1/0` 后重试。
+
+**临时绕过**
+
+- 用户 SQL 使用 `0/1`；或走人工维护流程。
+
+**后续实现**
+
+- 表选项值支持布尔字面量，并在 AST/格式化/规范化比较中保持等价。
+- 增加 `USE_BLOOM_FILTER` 的 roundtrip 用例。
+
+## 新增记录要求
+
+发现新的解析器缺口时，补充：
+
+1. 最小可复现 SQL；
+2. 解析器返回的原始错误与位置；
+3. 用户 SQL、已有表快照、回滚生成分别是否受影响；
+4. 当前是否有安全的临时处理；
+5. 解析器实现后需要补的单元/集成用例。
+
+## 回归测试
+
+- `internal/change/actions/oceanbase/schema_compat_test.go`
+  - 已有表含 `ON UPDATE CURRENT_TIMESTAMP` 与 `USE_BLOOM_FILTER = FALSE` 时可生成/确认回滚；
+  - 分区表仍被拒绝；
+  - 整数显示宽度不影响结构比对。
