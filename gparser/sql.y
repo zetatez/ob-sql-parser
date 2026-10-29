@@ -89,7 +89,7 @@ import (
 %type <node> insert_stmt ignore_opt col_list_opt insert_source on_dup_opt assignment_list assignment returning_opt
 %type <node> update_stmt delete_stmt delete_mods using_opt table_ref_list
 %type <node> create_stmt create_table_tail create_def_list create_def column_def column_attrs_opt column_attr
-%type <node> opt_stored opt_as_select as_select sequence_options sequence_option
+%type <node> opt_stored opt_as_select sequence_options sequence_option
 %type <node> table_constraint constraint_body table_options_opt table_option table_option_value
 %type <node> opt_if_not_exists opt_if_exists opt_unique index_col_list index_col db_opts_opt db_opt opt_into
 %type <node> drop_stmt opt_on_table table_name_list truncate_stmt opt_table_kw
@@ -100,7 +100,7 @@ import (
 %type <node> opt_subpartition opt_subpartitions_count
 %type <node> opt_auto_partition
 %type <node> ref_action opt_returning delete_table_list returning_list returning_col
-%type <node> opt_low_priority opt_index_option_list alter_index_option column_group_elements column_group_element
+%type <node> opt_low_priority alter_index_option column_group_elements column_group_element
 %type <node> opt_index_tail with_value_list with_value
 %type <node> opt_fk_reference opt_pk_name_list opt_fk_ref_actions opt_fk_ref_action_update opt_fk_ref_action_delete
 %type <node> opt_index_using opt_col_length cst_col_list cst_col pk_col_list pk_col fk_col_list fk_col
@@ -2385,12 +2385,6 @@ opt_table_colgroup:
 	| WITH COLUMN GROUP '(' column_group_elements ')'
 	{
 		$$ = "WITH COLUMN GROUP (" + asStr($5) + ")"
-	}
-
-as_select:
-	AS select_stmt
-	{
-		$$ = $2
 	}
 
 opt_as_select:
@@ -4769,16 +4763,6 @@ alter_action:
 	| DISABLE KEYS
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterDisableKeys}
-	}
-
-opt_index_option_list:
-	/*empty*/
-	{
-		$$ = nil
-	}
-	| opt_index_option_list alter_index_option
-	{
-		$$ = append(asStringList($1), asStr($2))
 	}
 
 alter_index_option:
