@@ -908,6 +908,55 @@ func TestIndexOptionsAndColumnGroup(t *testing.T) {
 	}
 }
 
+func TestIndexStoringWithAndCheck(t *testing.T) {
+	// STORING(...) 覆盖索引列（建索引/建表约束/ALTER 三处）
+	st := parseAll(t, "CREATE INDEX idx ON t (a) STORING (b, c)")
+	if len(st[0].(*ast.CreateIndexStmt).Storing) != 2 {
+		t.Fatal("create index storing lost")
+	}
+	st = parseAll(t, "CREATE TABLE t (a INT, b INT, KEY k (a) STORING (b))")
+	if len(st[0].(*ast.CreateTableStmt).Constraints[0].Storing) != 1 {
+		t.Fatal("constraint storing lost")
+	}
+	st = parseAll(t, "ALTER TABLE t ADD INDEX idx (a) STORING (b, c)")
+	if len(st[0].(*ast.AlterTableStmt).Actions[0].Storing) != 2 {
+		t.Fatal("alter storing lost")
+	}
+	// WITH (...): 索引参数
+	st = parseAll(t, "CREATE UNIQUE INDEX idx ON t (a) STORING (b) WITH (cf = 'default')")
+	if len(st[0].(*ast.CreateIndexStmt).WithOpts) != 1 {
+		t.Fatal("create index with lost")
+	}
+	// USING HASH
+	if st := parseAll(t, "CREATE INDEX idx USING HASH ON t (a)"); st[0].(*ast.CreateIndexStmt).Method != "HASH" {
+		t.Fatal("using hash lost")
+	}
+	// 列级 CHECK
+	st = parseAll(t, "CREATE TABLE t (a INT CHECK (a > 0))")
+	if st[0].(*ast.CreateTableStmt).Columns[0].Check == nil {
+		t.Fatal("column check lost")
+	}
+	// CHANGE COLUMN ... FIRST/AFTER
+	st = parseAll(t, "ALTER TABLE t CHANGE COLUMN old new INT AFTER b")
+	a := st[0].(*ast.AlterTableStmt).Actions[0]
+	if a.Kind != ast.AlterChangeColumn || a.Position != "AFTER" || a.RefCol != "b" {
+		t.Fatalf("change position: %+v", a)
+	}
+	// DROP CHECK / DROP CONSTRAINT
+	for _, tc := range []struct {
+		src  string
+		kind ast.AlterActionKind
+	}{
+		{"ALTER TABLE t DROP CHECK c1", ast.AlterDropCheck},
+		{"ALTER TABLE t DROP CONSTRAINT c1", ast.AlterDropConstraint},
+	} {
+		st = parseAll(t, tc.src)
+		if st[0].(*ast.AlterTableStmt).Actions[0].Kind != tc.kind {
+			t.Fatalf("%s: kind = %q", tc.src, st[0].(*ast.AlterTableStmt).Actions[0].Kind)
+		}
+	}
+}
+
 func TestDDLDMLExtras3(t *testing.T) {
 	// CREATE INDEX 完整形态
 	st := parseAll(t, "CREATE INDEX idx USING BTREE ON t (a(10) DESC, b)")

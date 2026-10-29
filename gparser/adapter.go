@@ -335,7 +335,7 @@ var keywordTerminal = map[string]int{
 	"auto_increment": AUTO_INCREMENT, "charset": CHARSET, "collate": COLLATE,
 	"invisible": INVISIBLE, "cast": CAST, "for": FOR, "share": SHARE,
 	"key_block_size": KEY_BLOCK_SIZE, "block_size": BLOCK_SIZE, "action": ACTION, "no": NO,
-	"enable": ENABLE, "disable": DISABLE, "zerofill": ZEROFILL, "visible": VISIBLE, "each": EACH,
+	"enable": ENABLE, "disable": DISABLE, "zerofill": ZEROFILL, "visible": VISIBLE, "each": EACH, "storing": STORING,
 	"account": ACCOUNT, "random": RANDOM,
 	"window": WINDOW, "recursive": RECURSIVE, "escape": ESCAPE,
 	"div": DIV, "mod": MOD, "sounds": SOUNDS,

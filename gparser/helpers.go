@@ -36,6 +36,7 @@ type colAttrs struct {
 	uniqueKey     bool
 	ref           fkRef
 	hasRef        bool
+	check         ast.Expression
 }
 
 // asIndexCol 组装一个索引列（可带前缀长度与排序方向）。
@@ -447,6 +448,12 @@ func asIdentName(v interface{}) string {
 	return ""
 }
 
+// withTail 是索引后缀 WITH (...) / WITH COLUMN GROUP (...) 的合并载体。
+type withTail struct {
+	opts     []string
+	colgroup string
+}
+
 // identsJoin 把标识符列表拼成 "a, b"。
 func identsJoin(ids []*ast.Identifier) string {
 	if len(ids) == 0 {
@@ -605,6 +612,7 @@ func buildColumnDef(name interface{}, dt interface{}, attrs interface{}) *ast.Co
 			cd.OnDelete = a.ref.onDelete
 			cd.FkOnUpdate = a.ref.onUpdate
 		}
+		cd.Check = a.check
 	}
 	return cd
 }
@@ -861,6 +869,9 @@ func mergeAttrs(a, b *colAttrs) *colAttrs {
 	if b.hasRef {
 		a.ref = b.ref
 		a.hasRef = true
+	}
+	if b.check != nil {
+		a.check = b.check
 	}
 	if b.invisible {
 		a.invisible = true

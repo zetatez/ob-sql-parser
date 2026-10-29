@@ -183,6 +183,11 @@ func (f *formatter) columnDef(c *ast.ColumnDef) string {
 		sb.WriteString(" COLLATE ")
 		sb.WriteString(c.Collate)
 	}
+	if c.Check != nil {
+		sb.WriteString(" CHECK (")
+		sb.WriteString(f.exprString(c.Check))
+		sb.WriteString(")")
+	}
 	if c.PrimaryKey {
 		sb.WriteString(" PRIMARY KEY")
 	}
@@ -284,6 +289,19 @@ func (f *formatter) constraintDef(c *ast.ConstraintDef) string {
 			sb.WriteString(" ON UPDATE " + c.OnUpdate)
 		}
 	}
+	if len(c.Storing) > 0 {
+		sb.WriteString(" STORING (")
+		for i, col := range c.Storing {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(f.ident(col))
+		}
+		sb.WriteString(")")
+	}
+	if len(c.WithOpts) > 0 {
+		sb.WriteString(" WITH (" + strings.Join(c.WithOpts, ", ") + ")")
+	}
 	for _, o := range c.Options {
 		sb.WriteString(" " + o)
 	}
@@ -322,6 +340,7 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		if a.Column != nil {
 			f.raw(f.columnDef(a.Column))
 		}
+		f.colPosition(a)
 	case ast.AlterRenameColumn:
 		f.printf("RENAME COLUMN %s TO %s", f.quoteIfNeeded(a.Name), f.quoteIfNeeded(a.NewName))
 	case ast.AlterRenameTable:
@@ -343,6 +362,14 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 			f.indexColsParen(a.IndexCols)
 		} else {
 			f.colsParen(a.Columns)
+		}
+		if len(a.Storing) > 0 {
+			f.raw(" STORING (")
+			f.idents(a.Storing)
+			f.raw(")")
+		}
+		if len(a.WithOpts) > 0 {
+			f.raw(" WITH (" + strings.Join(a.WithOpts, ", ") + ")")
 		}
 		for _, o := range a.IndexOptions {
 			f.printf(" %s", o)
@@ -427,6 +454,10 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		f.printf("ALTER INDEX %s VISIBLE", f.quoteIfNeeded(a.Name))
 	case ast.AlterInvisibleIndex:
 		f.printf("ALTER INDEX %s INVISIBLE", f.quoteIfNeeded(a.Name))
+	case ast.AlterDropCheck:
+		f.printf("DROP CHECK %s", f.quoteIfNeeded(a.Name))
+	case ast.AlterDropConstraint:
+		f.printf("DROP CONSTRAINT %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterEnableKeys:
 		f.raw("ENABLE KEYS")
 	case ast.AlterDisableKeys:

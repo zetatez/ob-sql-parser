@@ -790,6 +790,14 @@ func (f *formatter) stmt(s ast.Statement) {
 		}
 		f.printf("ON %s ", f.ident(v.Table))
 		f.indexColsParen(v.Columns)
+		if len(v.Storing) > 0 {
+			f.raw(" STORING (")
+			f.idents(v.Storing)
+			f.raw(")")
+		}
+		if len(v.WithOpts) > 0 {
+			f.raw(" WITH (" + strings.Join(v.WithOpts, ", ") + ")")
+		}
 		for _, o := range v.Options {
 			f.printf(" %s", o)
 		}

@@ -25,6 +25,7 @@ type ColumnDef struct {
 	RefColumns []*Identifier
 	OnDelete   string
 	FkOnUpdate string
+	Check      Expression // 列级 CHECK (expr)
 }
 
 // Nullable is a tri-state column nullability.
@@ -54,6 +55,8 @@ type ConstraintDef struct {
 	IndexCols   []IndexCol    // KEY/INDEX/UNIQUE 带顺序/长度的列
 	Options     []string      // KEY/INDEX/UNIQUE 索引选项 (LOCAL/GLOBAL/KEY_BLOCK_SIZE/COMMENT)
 	ColumnGroup string        // KEY/INDEX/UNIQUE ... WITH COLUMN GROUP (...)
+	Storing     []*Identifier // STORING (b, c)
+	WithOpts    []string      // WITH (...)
 	Check       Expression    // CHECK (expr)
 	IndexType   string
 	RefTable    *Identifier   // FOREIGN KEY ... REFERENCES table
@@ -340,7 +343,9 @@ type CreateIndexStmt struct {
 	Method      string   // USING BTREE/HASH
 	Options     []string // GLOBAL/LOCAL/KEY_BLOCK_SIZE/COMMENT/...
 	Partition   *PartitionSpec
-	ColumnGroup string // WITH COLUMN GROUP (...)
+	ColumnGroup string        // WITH COLUMN GROUP (...)
+	Storing     []*Identifier // STORING (b, c)
+	WithOpts    []string      // WITH (cf='default', ...)
 }
 
 // IndexCol 是索引列：可带前缀长度与排序方向。
@@ -398,6 +403,8 @@ const (
 	AlterInvisibleIndex AlterActionKind = "ALTER INDEX INVISIBLE"
 	AlterEnableKeys     AlterActionKind = "ENABLE KEYS"
 	AlterDisableKeys    AlterActionKind = "DISABLE KEYS"
+	AlterDropCheck      AlterActionKind = "DROP CHECK"
+	AlterDropConstraint AlterActionKind = "DROP CONSTRAINT"
 )
 
 // AlterAction is one comma-separated action in an ALTER TABLE statement.
@@ -422,7 +429,9 @@ type AlterAction struct {
 	IndexOptions []string // ADD INDEX ... LOCAL/GLOBAL/COMMENT '..'/KEY_BLOCK_SIZE=n
 	Visible      bool     // ALTER INDEX ... VISIBLE/INVISIBLE
 	IndexCols    []IndexCol
-	ColumnGroup  string // ADD INDEX ... WITH COLUMN GROUP (...)
+	ColumnGroup  string        // ADD INDEX ... WITH COLUMN GROUP (...)
+	Storing      []*Identifier // ADD INDEX ... STORING (b, c)
+	WithOpts     []string      // ADD INDEX ... WITH (...)
 
 	// partition operations
 	PartitionDefs []PartitionDef
