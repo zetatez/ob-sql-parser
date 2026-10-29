@@ -461,10 +461,6 @@ func identsJoin(ids []*ast.Identifier) string {
 	return strings.Join(parts, ", ")
 }
 
-func quoteSql(s string) string {
-	return "'" + s + "'"
-}
-
 // litText 返回字面量的源文本（带引号），保证格式化后可再解析。
 func litText(v interface{}) string {
 	if l, ok := v.(*ast.Literal); ok {
