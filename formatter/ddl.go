@@ -458,6 +458,8 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		f.printf("DROP CHECK %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterDropConstraint:
 		f.printf("DROP CONSTRAINT %s", f.quoteIfNeeded(a.Name))
+	case ast.AlterDropForeignKey:
+		f.printf("DROP FOREIGN KEY %s", f.quoteIfNeeded(a.Name))
 	case ast.AlterEnableKeys:
 		f.raw("ENABLE KEYS")
 	case ast.AlterDisableKeys:

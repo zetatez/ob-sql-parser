@@ -2408,19 +2408,19 @@ partition_by:
 		$$ = &ast.PartitionSpec{Kind: ast.PartitionListColumns, Columns: asIdentList($4), Auto: ap.auto, Size: ap.size,
 			SubKind: ss.kind, SubExpr: ss.expr, SubColumns: ss.cols, SubCount: ss.count, Partitions: asPartitionDefs($8)}
 	}
-	| HASH '(' expr ')' opt_auto_partition opt_partitions_count opt_subpartition
+	| HASH '(' expr ')' opt_auto_partition opt_partitions_count opt_subpartition opt_partition_defs
 	{
 		ap := asAutoPart($5)
 		ss := asSubSpec($7)
 		$$ = &ast.PartitionSpec{Kind: ast.PartitionHash, Expr: asExpr($3), Count: asExpr($6), Auto: ap.auto, Size: ap.size,
-			SubKind: ss.kind, SubExpr: ss.expr, SubColumns: ss.cols, SubCount: ss.count}
+			SubKind: ss.kind, SubExpr: ss.expr, SubColumns: ss.cols, SubCount: ss.count, Partitions: asPartitionDefs($8)}
 	}
-	| KEY '(' ident_list ')' opt_auto_partition opt_partitions_count opt_subpartition
+	| KEY '(' ident_list ')' opt_auto_partition opt_partitions_count opt_subpartition opt_partition_defs
 	{
 		ap := asAutoPart($5)
 		ss := asSubSpec($7)
 		$$ = &ast.PartitionSpec{Kind: ast.PartitionKey, Columns: asIdentList($3), Count: asExpr($6), Auto: ap.auto, Size: ap.size,
-			SubKind: ss.kind, SubExpr: ss.expr, SubColumns: ss.cols, SubCount: ss.count}
+			SubKind: ss.kind, SubExpr: ss.expr, SubColumns: ss.cols, SubCount: ss.count, Partitions: asPartitionDefs($8)}
 	}
 
 opt_auto_partition:
@@ -2686,9 +2686,13 @@ table_constraint:
 	| constraint_body
 
 constraint_body:
-	PRIMARY KEY '(' pk_col_list ')'
+	PRIMARY KEY '(' pk_col_list ')' opt_index_option_list opt_index_tail
 	{
-		$$ = &ast.ConstraintDef{Kind: "PRIMARY KEY", Columns: asIdentList($4)}
+		cd := &ast.ConstraintDef{Kind: "PRIMARY KEY", Columns: asIdentList($4), Options: asStringList($6)}
+		t := $7.(withTail)
+		cd.WithOpts = t.opts
+		cd.ColumnGroup = t.colgroup
+		$$ = cd
 	}
 	| UNIQUE '(' pk_col_list ')'
 	{
@@ -4427,6 +4431,10 @@ alter_action:
 	| DROP CHECK NAME_OB
 	{
 		$$ = ast.AlterAction{Kind: ast.AlterDropCheck, Name: asIdentName($3)}
+	}
+	| DROP FOREIGN KEY NAME_OB
+	{
+		$$ = ast.AlterAction{Kind: ast.AlterDropForeignKey, Name: asIdentName($4)}
 	}
 	| DROP CONSTRAINT NAME_OB
 	{

@@ -949,11 +949,26 @@ func TestIndexStoringWithAndCheck(t *testing.T) {
 	}{
 		{"ALTER TABLE t DROP CHECK c1", ast.AlterDropCheck},
 		{"ALTER TABLE t DROP CONSTRAINT c1", ast.AlterDropConstraint},
+		{"ALTER TABLE t DROP FOREIGN KEY fk1", ast.AlterDropForeignKey},
 	} {
 		st = parseAll(t, tc.src)
 		if st[0].(*ast.AlterTableStmt).Actions[0].Kind != tc.kind {
 			t.Fatalf("%s: kind = %q", tc.src, st[0].(*ast.AlterTableStmt).Actions[0].Kind)
 		}
+	}
+
+	// 表级 PRIMARY KEY 索引选项
+	st = parseAll(t, "CREATE TABLE t (a INT, PRIMARY KEY (a) LOCAL BLOCK_SIZE 8192)")
+	pk := st[0].(*ast.CreateTableStmt).Constraints[0]
+	if pk.Kind != "PRIMARY KEY" || len(pk.Options) != 2 {
+		t.Fatalf("pk options: %+v", pk)
+	}
+
+	// HASH/KEY 分区显式命名分区
+	st = parseAll(t, "CREATE TABLE t (a INT) PARTITION BY HASH (a) (PARTITION p0, PARTITION p1)")
+	ps := st[0].(*ast.CreateTableStmt).Partition
+	if ps.Kind != ast.PartitionHash || len(ps.Partitions) != 2 || ps.Partitions[0].Name != "p0" {
+		t.Fatalf("hash named partitions: %+v", ps)
 	}
 }
 

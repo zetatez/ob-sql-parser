@@ -405,6 +405,7 @@ const (
 	AlterDisableKeys    AlterActionKind = "DISABLE KEYS"
 	AlterDropCheck      AlterActionKind = "DROP CHECK"
 	AlterDropConstraint AlterActionKind = "DROP CONSTRAINT"
+	AlterDropForeignKey AlterActionKind = "DROP FOREIGN KEY"
 )
 
 // AlterAction is one comma-separated action in an ALTER TABLE statement.
