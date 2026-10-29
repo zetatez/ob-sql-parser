@@ -383,6 +383,9 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		}
 	case ast.AlterAddFulltextIndex:
 		f.raw("ADD FULLTEXT INDEX ")
+		if a.IfNotExists {
+			f.raw("IF NOT EXISTS ")
+		}
 		if a.Name != "" {
 			f.printf("%s ", f.quoteIfNeeded(a.Name))
 		}
@@ -396,6 +399,9 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 		}
 	case ast.AlterAddSpatialIndex:
 		f.raw("ADD SPATIAL INDEX ")
+		if a.IfNotExists {
+			f.raw("IF NOT EXISTS ")
+		}
 		if a.Name != "" {
 			f.printf("%s ", f.quoteIfNeeded(a.Name))
 		}
@@ -413,6 +419,9 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 			f.raw("UNIQUE ")
 		}
 		f.raw("INDEX ")
+		if a.IfNotExists {
+			f.raw("IF NOT EXISTS ")
+		}
 		if a.Name != "" {
 			f.printf("%s ", f.quoteIfNeeded(a.Name))
 		}
@@ -436,7 +445,11 @@ func (f *formatter) alterAction(a *ast.AlterAction) {
 			f.printf(" %s", a.ColumnGroup)
 		}
 	case ast.AlterDropIndex:
-		f.printf("DROP INDEX %s", f.quoteIfNeeded(a.Name))
+		f.raw("DROP INDEX ")
+		if a.IfExists {
+			f.raw("IF EXISTS ")
+		}
+		f.raw(f.quoteIfNeeded(a.Name))
 	case ast.AlterRenameIndex:
 		f.printf("RENAME INDEX %s TO %s", f.quoteIfNeeded(a.Name), f.quoteIfNeeded(a.NewName))
 	case ast.AlterDropPrimaryKey:
