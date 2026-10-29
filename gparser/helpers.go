@@ -21,6 +21,7 @@ type dtype struct {
 type colAttrs struct {
 	nullable      ast.Nullable
 	def           ast.Expression
+	onUpdate      ast.Expression
 	comment       string
 	autoIncrement bool
 	charset       string
@@ -526,6 +527,7 @@ func buildColumnDef(name interface{}, dt interface{}, attrs interface{}) *ast.Co
 	if a, ok := attrs.(*colAttrs); ok && a != nil {
 		cd.Nullable = a.nullable
 		cd.Default = a.def
+		cd.OnUpdate = a.onUpdate
 		cd.Comment = a.comment
 		cd.AutoIncrement = a.autoIncrement
 		cd.Charset = a.charset
@@ -740,6 +742,9 @@ func mergeAttrs(a, b *colAttrs) *colAttrs {
 	}
 	if b.def != nil {
 		a.def = b.def
+	}
+	if b.onUpdate != nil {
+		a.onUpdate = b.onUpdate
 	}
 	if b.comment != "" {
 		a.comment = b.comment

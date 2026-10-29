@@ -282,7 +282,7 @@ func (n *DeleteStmt) Children() []Node {
 func (n *CreateTableStmt) Children() []Node {
 	var out []Node
 	for _, c := range n.Columns {
-		out = append(out, childrenOf(c.Default, c.Generated)...)
+		out = append(out, childrenOf(c.Default, c.Generated, c.OnUpdate)...)
 	}
 	for _, k := range n.Constraints {
 		out = append(out, childrenOf(k.Check)...)

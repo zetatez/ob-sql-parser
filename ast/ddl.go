@@ -8,6 +8,7 @@ type ColumnDef struct {
 	Unsigned        bool
 	Nullable        Nullable
 	Default         Expression
+	OnUpdate        Expression // ON UPDATE CURRENT_TIMESTAMP[(n)] / NOW() / ...
 	Comment         string
 	AutoIncrement   bool
 	Charset         string

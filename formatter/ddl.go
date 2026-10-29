@@ -157,6 +157,10 @@ func (f *formatter) columnDef(c *ast.ColumnDef) string {
 		sb.WriteString(" DEFAULT ")
 		sb.WriteString(f.exprString(c.Default))
 	}
+	if c.OnUpdate != nil {
+		sb.WriteString(" ON UPDATE ")
+		sb.WriteString(f.exprString(c.OnUpdate))
+	}
 	if c.AutoIncrement {
 		sb.WriteString(" AUTO_INCREMENT")
 	}

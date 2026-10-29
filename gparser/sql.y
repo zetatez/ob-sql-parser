@@ -2435,6 +2435,10 @@ column_attr:
 	{
 		$$ = &colAttrs{def: asExpr($2)}
 	}
+	| ON UPDATE expr
+	{
+		$$ = &colAttrs{onUpdate: asExpr($3)}
+	}
 	| AUTO_INCREMENT
 	{
 		$$ = &colAttrs{autoIncrement: true}
@@ -2619,6 +2623,10 @@ table_option_value:
 		$$ = asLitValue($1)
 	}
 	| HEXNUM
+	{
+		$$ = asLitValue($1)
+	}
+	| BOOL_VALUE
 	{
 		$$ = asLitValue($1)
 	}

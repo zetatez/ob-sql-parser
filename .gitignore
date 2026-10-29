@@ -13,8 +13,8 @@
 
 # Code coverage profiles and other test artifacts
 *.out
-coverage.*
-!coverage.go
+coverage.out
+coverage.txt
 *.coverprofile
 profile.cov
 

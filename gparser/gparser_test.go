@@ -591,6 +591,14 @@ func TestExtraRoundTrip(t *testing.T) {
 		"SHOW EVENTS",
 		"SHOW EVENTS FROM mydb",
 		"SHOW PROFILE FOR QUERY 1",
+		// ON UPDATE CURRENT_TIMESTAMP 与布尔表选项（此前不支持）
+		"CREATE TABLE t (id bigint NOT NULL, updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id))",
+		"CREATE TABLE t (updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP())",
+		"CREATE TABLE t (updated_at timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))",
+		"CREATE TABLE t (updated_at timestamp DEFAULT NOW() ON UPDATE NOW())",
+		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) USE_BLOOM_FILTER = FALSE",
+		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) USE_BLOOM_FILTER = TRUE",
+		"CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) COMPRESSION = 'zstd' USE_BLOOM_FILTER = FALSE",
 	}
 	for _, sql := range cases {
 		t.Run(sql, func(t *testing.T) {
@@ -732,5 +740,43 @@ func TestDoStmt(t *testing.T) {
 		if st[0].(*ast.DoStmt) == nil {
 			t.Fatalf("not a DoStmt: %s", s)
 		}
+	}
+}
+
+func TestColumnOnUpdate(t *testing.T) {
+	// ON UPDATE CURRENT_TIMESTAMP 必须保留在 AST 与格式化输出中（此前不支持）。
+	src := "CREATE TABLE t (id bigint NOT NULL, updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id))"
+	st := parseAll(t, src)
+	ct := st[0].(*ast.CreateTableStmt)
+	if len(ct.Columns) != 2 || ct.Columns[1].OnUpdate == nil {
+		t.Fatalf("OnUpdate not preserved: %+v", ct.Columns)
+	}
+	if got := formatter.Format(st[0]); got != "CREATE TABLE t ( id bigint NOT NULL, updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (id))" {
+		t.Fatalf("format mismatch: %s", got)
+	}
+
+	// 精度形态 CURRENT_TIMESTAMP(6)
+	srcN := "CREATE TABLE t (updated_at timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6))"
+	stN := parseAll(t, srcN)
+	if stN[0].(*ast.CreateTableStmt).Columns[0].OnUpdate == nil {
+		t.Fatal("ON UPDATE CURRENT_TIMESTAMP(6) not preserved")
+	}
+}
+
+func TestTableOptionBool(t *testing.T) {
+	// 布尔表选项值 TRUE/FALSE（此前 BOOL_VALUE 不在 table_option_value）。
+	for _, v := range []string{"FALSE", "TRUE", "true", "false"} {
+		src := "CREATE TABLE t (id bigint NOT NULL, PRIMARY KEY (id)) USE_BLOOM_FILTER = " + v
+		st := parseAll(t, src)
+		ct := st[0].(*ast.CreateTableStmt)
+		if len(ct.Options) != 1 || ct.Options[0].Name != "use_bloom_filter" {
+			t.Fatalf("option not parsed: %s", src)
+		}
+		// 归一化为小写布尔值，格式化后可再解析
+		got := formatter.Format(st[0])
+		if ct.Options[0].Value != "true" && ct.Options[0].Value != "false" {
+			t.Fatalf("bool option value = %q", ct.Options[0].Value)
+		}
+		parseAll(t, got) // 格式化输出必须可再解析
 	}
 }
